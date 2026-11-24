@@ -1,28 +1,25 @@
-# Stage 04: Receive and Pre-Check
+# Stage 04: Receive
 
-Log an incoming document from a client and automatically compare it against the original request.
+Log a file a client sent and compare it with the request.
 
-## Inputs
+## Load
 
-| Source | File/Location | Section/Scope | Why |
-|--------|--------------|---------------|-----|
-| User | (conversation) | What was received, from which client | The incoming document details |
-| Tracker | `../../shared/tracker.csv` | Rows matching this client with status "Open" or "Returned" | Find the original request to compare against |
-| Reference | `references/pre-check-rules.md` | Full file | What to verify in the comparison |
+| Source | File |
+|---|---|
+| Rules | `core/safety.md`, `core/pre-check-rules.md`, `core/schema.md` |
+| Tracker | `shared/tracker.csv` |
+| The file | the attachment, when there is one |
+
+Do not load stages 01–03 or 05.
 
 ## Process
 
-1. Ask the user: which client sent something, and what did they send (document type, date range, any details visible)
-2. Look up the client's open requests in the tracker
-3. Match the received document to the most likely open request
-4. Run the pre-check comparison: document type match, date range match, entity match, completeness
-5. Update the tracker: set status to "Received" and record the received date. Follow-ups stop immediately
-6. Flag the pre-check result: MATCH ("This appears to match the request -- please confirm") or MISMATCH (describe the specific discrepancy)
-7. Save the receive log to output/
+1. If a file is attached, read it. Take the type, period, entity, account last 4, document number, and any sentence that names a different document. Do not ask the user to retype what the file already says. They can correct a misread.
+2. If the client has two or more open items, show the match and the other open items. Wait for confirmation before changing the tracker.
+3. Run the check in `core/pre-check-rules.md`. The outcomes are MATCH, PARTIAL, MISMATCH, INCOMPLETE, and REQUEST_MAY_BE_WRONG.
+4. Update the row the way that file says. A partial stays open for the remaining lines. A request that may be wrong is not turned into "please send the same number again."
+5. Do not draft a client email here. Review does that after a person decides.
 
-## Outputs
+## Output
 
-| Artifact | Location | Format |
-|----------|----------|--------|
-| Receive log | `output/[client-slug]-received-[date].md` | What was received, pre-check result (match/mismatch with details), assigned reviewer |
-| Updated tracker | `../../shared/tracker.csv` | Status changed to "Received", received date recorded |
+`output/[client-slug]-received-[YYYY-MM-DD].md` with the outcome, the evidence from the file, and whether a person still needs to confirm the match.

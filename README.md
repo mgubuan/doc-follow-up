@@ -1,64 +1,47 @@
 # doc-follow-up
 
-Manage open client documentation requests across a bookkeeping team: register what you need, track deadlines, draft contextual follow-up emails, and close the loop when documents arrive.
+A bookkeeping or tax firm is waiting on client documents. This repo decides who to contact today, drafts the email, and checks a file that comes back before anyone treats it as done.
 
-Built as an [Interpretable Context Methodology (ICM)](https://github.com/RinDig/Interpretable-Context-Methodology) workspace — folder structure as agent architecture. One agent, reading the right files at the right moment, works through a five-stage pipeline with a shared CSV tracker as the connective state.
+Two ways to use it:
 
-## Folder map
+- **Chat, no clone required.** Follow `core/`. Paste a list or say `demo`. The tracker comes back as a CSV. Nothing is stored.
+- **Claude Code.** Open this folder. The `stages/` pipeline reads the same core and keeps a local tracker in `shared/tracker.csv`.
+
+## Layout
 
 ```
-doc-follow-up/
-├── CLAUDE.md              entry point -- always loaded
-├── CONTEXT.md             task routing
-├── setup/
-│   └── questionnaire.md   onboarding -- run with "setup"
-├── shared/
-│   ├── tracker.csv        master request tracker -- the backbone
-│   ├── follow-up-rules.md deadline-driven follow-up schedule
-│   └── email-defaults.md  firm name, signature, reply-to
-├── stages/
-│   ├── 01-register/       add new documentation requests
-│   ├── 02-assess/         determine what needs follow-up today
-│   ├── 03-draft/          write contextual follow-up emails
-│   ├── 04-receive/        log incoming docs, run pre-check
-│   └── 05-review/         accept, reject, or override
-└── test-data/             fictional (LOTR-themed) mock documents for testing
+core/          schema, safety, follow-up rules, templates, one-shot flow
+demo/          fictional 12-client firm, dates relative to today
+shared/        local firm profile and working tracker
+stages/        register, assess, draft, receive, review
+tests/         regression suite, including the old sample as a fixture
 ```
 
-## Triggers
+## Try it
 
-| Keyword | Action |
-|---------|--------|
-| `setup` | Run onboarding questionnaire -- configures firm name, team, defaults |
-| `status` | Show pipeline status and open item counts |
-| `register` | Jump to Stage 01 to add a new request |
-| `assess` | Jump to Stage 02 to check what needs follow-up today |
-| `draft` | Jump to Stage 03 to write follow-up emails |
-| `received` | Jump to Stage 04 to log an incoming document |
-| `review` | Jump to Stage 05 to accept or reject a received document |
+In a chat agent pointed at `core/`, say `demo`. You get a mixed board for Northline Ledger Co.: items due today, items on track, one recent overdue, a call, a bad contact, a partial, a file waiting for review, and one accepted item. Dates are offsets from today, so the board does not age into an all-overdue list.
 
-## Stage flow
+Or paste a list. The agent shows what it understood, asks about gaps, and hands back drafts plus a CSV.
 
-The tracker CSV is the shared state that connects everything. This is not a linear pipeline -- stages run in any order based on what the team needs right now.
+`setup` is optional. It only fills `shared/firm.md` (name, reply-to, phone, team with titles, extra document types, how clients send files).
 
-1. **Register** writes new rows to the tracker
-2. **Assess** reads the tracker to find items due for follow-up
-3. **Draft** reads Stage 2 output + tracker to write emails
-4. **Receive** updates tracker status from Open to Received
-5. **Review** updates tracker status to Accepted or Returned (back to Open)
+## Tests
 
-## Getting started
+```bash
+python3 -m pip install -r requirements.txt
+python3 tests/run_tests.py
+```
 
-1. Clone this repo
-2. Open Claude Code (or Claude Desktop) in this folder
-3. Type `setup` and answer the onboarding questions
-4. Start working the pipeline -- type `status`, `register`, `assess`, `draft`, `received`, or `review`
+The suite checks the worked examples in `core/follow-up-rules.md` against `core/engine.py`, the fixture in `tests/fixtures/lotr/` as of 2026-09-14 (including the purchase-order and wrong-month files), privacy masking, and the demo firm on every day of 2026.
 
-## Test data
+## Rules that do not change
 
-`test-data/` and `shared/tracker.csv` ship pre-populated with fictional clients (Baggins & Associates, Rohan Cavalry Services, and similar) so you can run the full pipeline end-to-end before pointing it at real client data.
+- The cadence comes from the deadline, not a priority label.
+- The initial email counts as touch 1. At most four emails. Then a phone call, and not before the deadline.
+- One email per client per day. No email on a weekend.
+- Drafts only. A person sends them.
+- A received file is checked for type, period, entity, and completeness before it is accepted. Some lines can arrive without closing the rest. A file that shows the request itself is wrong is flagged that way, instead of asking the client for a document that does not exist.
 
 ## License
 
-MIT
-
+MIT. See `LICENSE`.

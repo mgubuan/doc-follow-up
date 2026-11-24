@@ -1,46 +1,38 @@
-# Onboarding Questionnaire: Client Documentation Follow-Up
+# Setup
 
-Read this file when the user types "setup". Ask ALL questions below in a single conversational pass. These configure the system, not a specific request.
+Run this when the user types `setup`. Setup is optional. `demo` and `one-shot` work before any answer is saved. Ask these questions when they want a signature and a firm profile, not as a gate in front of the first result.
 
----
+Write every answer into `shared/firm.md` and nowhere else. That file is the only setup store. After writing, read it back. If any `{{...}}` placeholder is still there, say which question was not saved and ask it again.
 
-### Q1: What is your firm name?
+## Questions
+
+### Q1. What is the firm name?
 - Placeholder: `{{FIRM_NAME}}`
-- Files: `shared/email-defaults.md`, `stages/03-draft/references/email-templates.md`
-- Type: free text
+- Store: `shared/firm.md`
 
-### Q2: What is your firm's email address?
+### Q2. What email should clients reply to?
 - Placeholder: `{{FIRM_EMAIL}}`
-- Files: `shared/email-defaults.md`
-- Type: free text
+- Store: `shared/firm.md`
 
-### Q3: What is your firm's phone number?
+### Q3. What phone number should the signature show?
 - Placeholder: `{{FIRM_PHONE}}`
-- Files: `shared/email-defaults.md`
-- Type: free text
+- Store: `shared/firm.md`
 
-### Q4: Who are your team members? (Name and title for each)
+### Q4. Who on the team sends these, and what is each person's title?
 - Placeholder: `{{TEAM_MEMBERS}}`
-- Files: `shared/email-defaults.md`
-- Type: free text
-- Example: "Sarah Chen, Lead Bookkeeper / Mike Torres, Staff Bookkeeper / Lisa Park, Account Manager"
+- Store: `shared/firm.md`, one `Name | Title` line per person
+- Example: `Avery Chen | Senior Bookkeeper`
 
-### Q5: What document types do you most commonly request from clients?
+### Q5. Which document types should be added to the standard list?
 - Placeholder: `{{DOC_TYPES}}`
-- Files: `stages/01-register/references/document-types.md`
-- Type: free text
-- Default: Invoice copies, receipt copies, forwarded emails, bank statements, logs, contracts, purchase orders
+- Store: `shared/firm.md`
+- The standard list is `core/document-types.md`. This answer is added to it. It does not replace it.
 
-### Q6: Do your clients have specific submission instructions?
+### Q6. How should clients send files?
 - Placeholder: `{{SUBMISSION_INSTRUCTIONS}}`
-- Files: `stages/01-register/references/document-types.md`
-- Type: free text
-- Default: Reply to the requesting email with attachments
+- Store: `shared/firm.md`
+- Default, if they have no preference: reply to the email with the file attached. Do not record an instruction that asks for a password or a login.
 
----
+## After the answers are stored
 
-## After Onboarding
-
-Replace all placeholders across workspace files. Then tell the user:
-
-"You are set up. Your documentation follow-up system is configured for [firm name] with [N] team members. To get started, type 'register' to add a documentation request, or 'status' to see the current tracker."
+Tell them the profile is saved, how many people are on the team, and that the next step is `demo`, a paste of their list, or `register` if they are working in the local tracker.

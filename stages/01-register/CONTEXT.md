@@ -1,27 +1,26 @@
-# Stage 01: Register Request
+# Stage 01: Register
 
-Add a new documentation request to the master tracker.
+Add requests to `shared/tracker.csv`. For a paste or a CSV the person will not keep in this repo, use `core/flows/one-shot.md` instead and do not write the tracker.
 
-## Inputs
+## Load
 
-| Source | File/Location | Section/Scope | Why |
-|--------|--------------|---------------|-----|
-| User | (conversation) | Client name, what is needed, deadline, context | The request details |
-| Tracker | `../../shared/tracker.csv` | Full file | Check for duplicates, get next ID |
-| Reference | `references/document-types.md` | Matching document type | Submission instructions for this doc type |
+| Source | File |
+|---|---|
+| Rules | `core/safety.md`, `core/schema.md`, `core/follow-up-rules.md` |
+| Types | `core/document-types.md` and `shared/firm.md` |
+| Tracker | `shared/tracker.csv` |
+
+Do not load stages 02–05.
 
 ## Process
 
-1. Ask the user for: client name, document type, specific description of what is needed, why it is needed, deadline, and who on the team owns this request
-2. Validate the document type against `references/document-types.md`. If it does not match a known type, confirm with the user
-3. Check the tracker for duplicate requests (same client, same doc type, same date range). If a potential duplicate exists, flag it
-4. Calculate the follow-up schedule based on the deadline using `../../shared/follow-up-rules.md`
-5. Add a new row to `../../shared/tracker.csv` with status "Open", follow-ups sent "0", and the calculated next follow-up date
-6. Save a registration summary to output/
+1. Take one request or a pasted list. Map it onto the schema. Show the understood table from the one-shot flow and ask about blanks. Do not invent a salutation, period, amount, or email.
+2. Put private comments in `internal_notes`. Put only what a client may read in `client_reason` and `description`. Several vendors or forms go in `lines`, not in the notes.
+3. Check for a duplicate (same client, type, period, and description).
+4. Compute the tier and the planned dates from `core/follow-up-rules.md`. The anchor is the registration date. `touches_sent` is 0. `next_touch` is the first planned business day.
+5. Append the row. Status is `Open` unless they already know it is a bad contact.
+6. Save a short registration note to `output/`.
 
-## Outputs
+## Output
 
-| Artifact | Location | Format |
-|----------|----------|--------|
-| Registration summary | `output/[client-slug]-[doc-type]-registration.md` | Client, request details, deadline, follow-up schedule, assigned team member |
-| Updated tracker | `../../shared/tracker.csv` | New row appended |
+`output/[client-slug]-[doc-type]-registration.md` with the client, the client-facing description, the deadline, the tier, the planned dates, and the owner.

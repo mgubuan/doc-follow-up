@@ -1,21 +1,26 @@
-# Client Documentation Follow-Up
+# Client documentation follow-up
 
-Track, follow up on, and close out open documentation requests from clients.
+Track requests, follow up on deadlines, and close them when the file is right.
 
-## Task Routing
+## Task routing
 
-| Task Type | Go To | Description |
-|-----------|-------|-------------|
-| Register a new request | `stages/01-register/CONTEXT.md` | Add a documentation request to the tracker |
-| Assess open items | `stages/02-assess/CONTEXT.md` | Determine what needs follow-up today |
-| Draft follow-up emails | `stages/03-draft/CONTEXT.md` | Write contextual emails grouped by client |
-| Log a received document | `stages/04-receive/CONTEXT.md` | Record incoming docs and run pre-check against original request |
-| Review a received document | `stages/05-review/CONTEXT.md` | Accept, reject, or override the pre-check |
+| Task | Go to |
+|---|---|
+| Paste a list, or run the sample firm | `core/flows/one-shot.md` and, for the sample, `demo/tracker.csv` |
+| Register into the local tracker | `stages/01-register/CONTEXT.md` |
+| See what is due today | `stages/02-assess/CONTEXT.md` |
+| Draft emails | `stages/03-draft/CONTEXT.md` |
+| Log a file that arrived | `stages/04-receive/CONTEXT.md` |
+| Accept or reject that file | `stages/05-review/CONTEXT.md` |
 
-## Shared Resources
+## Shared rules
 
-| Resource | Location | Contains |
-|----------|----------|----------|
-| Request tracker | `shared/tracker.csv` | Master list of all open and closed requests |
-| Follow-up rules | `shared/follow-up-rules.md` | Deadline-driven follow-up schedule and escalation logic |
-| Email defaults | `shared/email-defaults.md` | Firm name, sender info, signature block |
+| Resource | Location |
+|---|---|
+| Safety | `core/safety.md` |
+| Schema | `core/schema.md` |
+| Follow-up rules | `core/follow-up-rules.md` |
+| Local tracker | `shared/tracker.csv` |
+| Firm profile | `shared/firm.md` |
+
+The stage folders are the local workspace. They do not keep a second copy of the schedule, the templates, or the pre-check.
