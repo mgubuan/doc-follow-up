@@ -27,6 +27,7 @@ from core.engine import (  # noqa: E402
     COLUMNS,
     DRAFT_BANNER,
     SAFETY_LINE,
+    Action,
     Item,
     apply_next_touch,
     apply_precheck,
@@ -44,6 +45,14 @@ from core.engine import (  # noqa: E402
     render_call_note,
     render_client_reply,
     render_draft,
+    render_partial_reply,
+    mark_sent,
+    note_client_reply,
+    extract_document,
+    is_business_day,
+    today_for,
+    periods_overlap,
+    DEFAULT_TIMEZONE,
     resolve_tracker_text,
     return_item,
     tier_for,
@@ -130,7 +139,7 @@ def test_date_rules() -> None:
     check(plan["dates"][1] == "2026-09-11", "halfway of 11 days is day 5, 2026-09-11, not 2026-09-12")
     overdue_plan = example_plan("2026-09-14", "2026-09-10")
     check(
-        overdue_plan["dates"] == ["2026-09-14", "2026-09-15", "2026-09-17", "2026-09-21"],
+        overdue_plan["dates"] == ["2026-09-14", "2026-09-16", "2026-09-18", "2026-09-22"],
         f"overdue cadence drifted: {overdue_plan['dates']}",
     )
     # Tier stays comfortable when only 3 days remain. The next date is still the original plan.
@@ -144,7 +153,7 @@ def test_date_rules() -> None:
     check(action.kind == "wait" and action.next_touch == date(2026, 9, 14), "frozen next touch is 2026-09-14")
     holiday = plan_touches(date(2026, 9, 6), date(2026, 9, 17), [date(2026, 9, 14)])
     check(
-        [day.isoformat() for day in holiday] == ["2026-09-07", "2026-09-11", "2026-09-15", "2026-09-18"],
+        [day.isoformat() for day in holiday] == ["2026-09-08", "2026-09-11", "2026-09-15", "2026-09-18"],
         f"holiday did not move 2026-09-14 to 2026-09-15: {holiday}",
     )
     merged = plan_touches(date(2026, 9, 6), date(2026, 9, 17), [date(2026, 9, 11)])
@@ -178,23 +187,23 @@ def test_lotr_assess() -> None:
     groups = {group["client_name"]: group for group in result.email_groups}
     check(set(groups) == {
         "Baggins & Associates LLC",
-        "Rohan Cavalry Services Inc",
         "Isengard Technologies",
-        "Shire Agricultural Co-op",
     }, f"unexpected email groups: {list(groups)}")
     baggins = groups["Baggins & Associates LLC"]
     baggins_ids = [entry["item"].id for entry in baggins["entries"]]
-    check(baggins_ids == ["REQ-001", "REQ-002"], f"Baggins grouping {baggins_ids}")
-    check(baggins["email_kind"] == "reminder", "mixed initial + reminder is one reminder email")
-    check(
-        groups["Rohan Cavalry Services Inc"]["entries"][0]["action"].email_kind == "overdue",
-        "Rohan should get the overdue email, not a premature call",
-    )
+    check(baggins_ids == ["REQ-002"], f"Baggins grouping {baggins_ids}")
+    check(baggins["email_kind"] == "initial", "the due-date receipt should be a first request")
     check(groups["Isengard Technologies"]["entries"][0]["action"].email_kind == "initial", "Isengard initial was skipped")
-    shire = groups["Shire Agricultural Co-op"]["entries"][0]
-    check(shire["action"].next_touch == date(2026, 9, 14), "Shire was pushed to 2026-09-15")
+    # REQ-009's planned slot is still Monday, not the old off-by-one Tuesday.
+    # The send waits until Tuesday because the last contact was Saturday and
+    # the gap is two business days.
+    check(by_id["REQ-009"].plan()[1] == date(2026, 9, 14), "Shire plan slot drifted off Monday")
+    shire = next(entry for entry in result.waiting if entry["item"].id == "REQ-009")
+    check(shire["action"].next_touch == date(2026, 9, 15), "Shire gap did not hold until Tuesday")
     gondor = next(entry for entry in result.waiting if entry["item"].id == "REQ-004")
     check(gondor["action"].next_touch == date(2026, 9, 21), "Gondor was scheduled on Saturday 2026-09-19")
+    rohan = next(entry for entry in result.waiting if entry["item"].id == "REQ-003")
+    check(rohan["action"].next_touch == date(2026, 9, 15), "Rohan was emailed the day after a Sunday contact")
     check([entry["item"].id for entry in result.call_needed] == ["REQ-005"], "Mordor should be call needed")
     check([entry["item"].id for entry in result.bad_contact] == ["REQ-008"], "Moria should be bad contact")
     check([entry["item"].id for entry in result.review] == ["REQ-006"], "Rivendell should wait for review")
@@ -227,13 +236,27 @@ def test_lotr_assess() -> None:
         check(len(draft.split()) < 200, f"{group['client_name']} draft is over 200 words")
     baggins_draft = render_draft(baggins, FIRM)
     check("Hi Frodo," in baggins_draft, "known salutation missing")
-    check("June books cannot close" in baggins_draft, "client reason was stripped")
-    check("14,999" in baggins_draft, "amount was not formatted from the plain number")
+    check("$14,999" in baggins_draft, "amount was not formatted with a dollar sign")
+    check("2026-09-24" not in baggins_draft, "an ISO date reached the client draft")
+    check("Thursday, September 24, 2026" in baggins_draft, "deadline was not written as a human date")
+    check("We still need" not in baggins_draft, "a first request said 'still need'")
+    check("How to send:" in baggins_draft, "upload instructions missing")
+    check("[Sender Name]" not in baggins_draft, "a bracket placeholder reached the draft")
+    check("Samwise Gamgee" in baggins_draft, "known sender was replaced")
     isengard = render_draft(groups["Isengard Technologies"], FIRM)
     check("\nHello,\n" in isengard, "blank salutation did not fall back to Hello")
     check("Hi Saruman" not in isengard and "Hi saruman" not in isengard, "name was guessed from the email")
-    shire_draft = render_draft(groups["Shire Agricultural Co-op"], FIRM)
+    shire_item = by_id["REQ-009"]
+    shire_draft = render_draft(
+        {
+            "client_name": shire_item.client_name,
+            "email_kind": "reminder",
+            "entries": [{"item": shire_item, "action": assess_item(shire_item, date(2026, 9, 15))}],
+        },
+        FIRM,
+    )
     check("Second Breakfast" in shire_draft and "Elevenses" in shire_draft, "a line was left only in the notes")
+    check("August 3, 2026" in shire_draft or "August 2026" in shire_draft, "line period stayed ISO")
     call = render_call_note(by_id["REQ-005"])
     check("do not email" in call.lower() and "Nazgul" not in call, "call note quoted the internal suspicion")
     # A planted leak must fail the check.
@@ -303,7 +326,11 @@ def test_precheck() -> None:
     check(updated.status == "Partial", "partial was closed as received")
     open_labels = [line["label"] for line in updated.lines if line["status"] == "open"]
     check(open_labels == ["Elevenses Bakery"], open_labels)
-    check(updated.touches_sent == 0, "partial did not reset the silence streak")
+    check(updated.touches_sent == 1 and updated.last_touch == AS_OF, "partial did not count the thank-you as today's touch")
+    check(assess_item(updated, AS_OF).kind != "email", "partial queued a second email the same day")
+    partial_reply = render_partial_reply(updated, FIRM)
+    check("Thank you for sending" in partial_reply and "Elevenses" in partial_reply, partial_reply)
+    check("Second Breakfast" in partial_reply.split("Thank you for sending", 1)[-1].split("We still need", 1)[0], "the thank-you did not name what arrived")
     invoice = precheck(
         items["REQ-003"],
         {
@@ -316,7 +343,9 @@ def test_precheck() -> None:
     )
     check(invoice.outcome == "MATCH", "approximate amount must not fail an exact invoice")
     returned = return_item(items["REQ-003"], date(2026, 9, 16))
-    check(returned.status == "Returned" and returned.touches_sent == 0, "return did not reset")
+    check(returned.status == "Returned" and returned.touches_sent == 1, "return did not count the rejection as today's touch")
+    check(returned.last_touch == date(2026, 9, 16), "return cleared the last contact")
+    check(assess_item(returned, date(2026, 9, 16)).kind != "email", "return queued a second email the same day")
     check(returned.schedule_anchor == date(2026, 9, 16), "return did not re-anchor")
 
 
@@ -347,29 +376,23 @@ def test_pdfs() -> None:
     check("RCS-4087" in invoice and "Rohan" in invoice and "847,229.00" in invoice, "invoice text")
     receipt = text("receipt-one-ring-insurance-renewal.pdf")
     check("14,999.00" in receipt and "July 15, 2026" in receipt and "Baggins" in receipt, "insurance receipt")
-    # The decision uses the fields the PDF actually contains.
+    # The engine reads the PDFs. The decision is not fed a hand-built dict.
     items = {item.id: item for item in load_lotr()}
-    period = "2026-05" if "May 1" in may else ""
-    result = precheck(
-        items["REQ-001"],
-        {"doc_type": "Bank Statement", "period": period, "entity": "Baggins & Associates LLC", "account_last4": "1111", "complete": True},
-    )
-    check(result.outcome == "MISMATCH", "PDF-derived May statement did not mismatch")
-    pointer = re.search(r"PO #(ELF-2019)", po)
-    check(pointer is not None, "could not read ELF-2019 from the PDF")
-    po_result = precheck(
-        items["REQ-006"],
-        {
-            "doc_type": "Purchase Order",
-            "doc_number": "ELF-2021" if "PO #ELF-2021" in po else "",
-            "subject": "Miruvor Wine" if "Miruvor" in po else "",
-            "requested_subject": "Lembas Bread" if "Lembas" in po else "",
-            "pointer": {"number": pointer.group(1) if pointer else "", "subject": "Lembas Bread", "issued": "2026-08-05"},
-            "entity": "Rivendell Consulting Group",
-            "complete": True,
-        },
-    )
-    check(po_result.outcome == "REQUEST_MAY_BE_WRONG", "PDF-derived PO check failed")
+    may_facts = extract_document(str(folder / "bank-statement-shire-MAY-2026-baggins.pdf"))
+    check(may_facts.get("period") == "May 2026" and may_facts.get("account_last4") == "1111", may_facts)
+    may_result = precheck(items["REQ-001"], may_facts)
+    check(may_result.outcome == "MISMATCH", "engine-extracted May statement did not mismatch")
+    check("2026-06" in may_result.ask_client_for and "ELF-2021" not in may_result.ask_client_for, may_result.ask_client_for)
+    po_facts = extract_document(str(folder / "purchase-order-ELF-2021-miruvor-wine.pdf"))
+    check(po_facts.get("doc_number") == "ELF-2021", po_facts)
+    check((po_facts.get("pointer") or {}).get("number") == "ELF-2019", po_facts.get("pointer"))
+    po_result = precheck(items["REQ-006"], po_facts)
+    check(po_result.outcome == "REQUEST_MAY_BE_WRONG", "engine-extracted PO check failed")
+    check("ELF-2021" not in po_result.ask_client_for and "ELF-2019" in po_result.ask_client_for, po_result.ask_client_for)
+    breakfast_facts = extract_document(str(folder / "receipt-second-breakfast-aug3.pdf"))
+    check(breakfast_facts.get("lines_covered") == ["Second Breakfast catering"], breakfast_facts.get("lines_covered"))
+    partial = precheck(items["REQ-009"], breakfast_facts)
+    check(partial.outcome == "PARTIAL" and "Elevenses" in partial.ask_client_for, partial.ask_client_for)
 
 
 def test_privacy_and_intake() -> None:
@@ -430,19 +453,31 @@ def test_demo() -> None:
         check("DEMO-007" not in emailed and "DEMO-008" not in emailed, f"{today} emailed a stopped status")
         names = [group["client_name"] for group in result.email_groups]
         check(len(names) == len(set(names)), f"{today} sent two emails to one client")
-        if today.weekday() >= 5:
-            check(result.email_groups == [], f"{today} is a weekend and produced email")
-            continue
-        check(result.email_groups, f"{today} produced no email")
-        bright = next(group for group in result.email_groups if group["client_name"].startswith("Brightpath"))
-        check(len(bright["entries"]) == 2, f"{today} did not group Brightpath")
-        draft = render_draft(bright, DEMO_FIRM)
-        check("divorce" not in draft.lower(), f"{today} leaked the divorce note")
-        north = next(group for group in result.email_groups if group["client_name"].startswith("Northwind"))
-        north_draft = render_draft(north, DEMO_FIRM)
-        check("\nHello,\n" in north_draft, f"{today} Northwind greeting")
-        check("Hi Books" not in north_draft and "parental" not in north_draft.lower(), f"{today} Northwind draft")
-        check("Samir" not in north_draft, f"{today} guessed Samir")
+        if not is_business_day(today):
+            check(result.email_groups == [], f"{today} is not a business day and produced email")
+        statement_types = {
+            "bank statement",
+            "credit card statement",
+            "loan statement",
+            "payroll report",
+            "sales tax return",
+            "receipt",
+        }
+        for item in items:
+            if item.last_touch:
+                check(is_business_day(item.last_touch), f"{item.id} last touch {item.last_touch} is closed")
+            if item.registered:
+                check(is_business_day(item.registered), f"{item.id} registered {item.registered} is closed")
+            if item.doc_type.lower() in statement_types and re.fullmatch(r"\d{4}-\d{2}", item.period or ""):
+                year, month = (int(part) for part in item.period.split("-"))
+                month_end = date(year + (month == 12), 1 if month == 12 else month + 1, 1) - timedelta(days=1)
+                check(month_end < today, f"{today} {item.id} asks for {item.period} before that month ends")
+        for group in result.email_groups:
+            draft = render_draft(group, DEMO_FIRM)
+            check("divorce" not in draft.lower() and "parental" not in draft.lower(), f"{today} leaked a note")
+            check("[Sender Name]" not in draft and "2026-" not in draft.split("To:", 1)[-1], f"{today} machine formatting")
+            if group["client_name"].startswith("Northwind"):
+                check("\nHello,\n" in draft and "Hi Books" not in draft and "Samir" not in draft, f"{today} Northwind greeting")
     resolved = resolve_tracker_text(raw, date(2026, 11, 24))
     check("month:" not in resolved and "+10d" not in resolved and "-10d" not in resolved, "relative tokens survived")
     november = {item.id: item for item in load_tracker(resolved)}
@@ -450,15 +485,21 @@ def test_demo() -> None:
     check(november["DEMO-004"].period == "2025", november["DEMO-004"].period)
     january = load_tracker(resolve_tracker_text(raw, date(2026, 1, 15)))
     by_id = {item.id: item for item in january}
-    check(by_id["DEMO-001"].period == "2025-12", "month:-1 failed across the new year")
+    check(by_id["DEMO-001"].period.startswith("2025-"), "January request did not use a closed prior-year month")
+    for closed in (date(2026, 1, 1), date(2026, 9, 7), date(2026, 11, 26), date(2026, 7, 3), date(2027, 1, 1)):
+        holiday_board = assess(load_tracker(resolve_tracker_text(raw, closed)), closed)
+        check(holiday_board.email_groups == [], f"{closed} still drafted on a federal holiday")
     statuses = {item.status for item in november.values()}
     for status in ("Open", "Partial", "Received", "Accepted", "Bad contact", "Call needed"):
         check(status in statuses, f"demo is missing status {status}")
 
 
 def test_repo_shape() -> None:
-    header = (ROOT / "shared/tracker.csv").read_text().strip()
-    check(header == ",".join(COLUMNS), "shared/tracker.csv is not the empty schema header")
+    header = (ROOT / "shared/tracker.template.csv").read_text().strip()
+    check(header == ",".join(COLUMNS), "shared/tracker.template.csv is not the empty schema header")
+    ignored = (ROOT / ".gitignore").read_text()
+    check("shared/tracker.csv" in ignored, "a filled client tracker can be committed")
+    check("stages/*/output/*" in ignored or "stages/" in ignored, "stage output with client drafts can be committed")
     for path in (ROOT / "demo/tracker.csv", ROOT / "tests/fixtures/lotr/tracker.csv"):
         first = path.read_text().splitlines()[0]
         check(first == ",".join(COLUMNS), f"{path.name} header drifted")
@@ -505,6 +546,143 @@ def test_repo_shape() -> None:
         check(phrase in rules, f"rules missing {phrase!r}")
 
 
+def test_qa_fixes() -> None:
+    """Regression tests for the QA must-fix list. Names match the review items."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    # 1. Mark sent, then the same draft is not produced again the next day.
+    item = item_for("2026-11-02", "2026-11-20", 0)
+    item.id = "GAP-1"
+    item.last_touch = None
+    tuesday = date(2026, 11, 24)
+    first = assess_item(item, tuesday)
+    check(first.kind == "email", "catch-up should send once")
+    mark_sent([item], tuesday)
+    check(item.touches_sent == 1 and item.last_touch == tuesday, "mark sent did not record the email")
+    mark_sent([item], tuesday)
+    check(item.touches_sent == 1, "mark sent counted the same day twice")
+    wednesday = date(2026, 11, 25)
+    check(assess_item(item, wednesday).kind != "email", "the same email was drafted again the next day")
+
+    # 2. One catch-up, then a two-business-day gap. Juniper's shape: overdue, last contact several days ago.
+    juniper = item_for("2026-11-06", "2026-11-21", 2)
+    juniper.last_touch = date(2026, 11, 16)
+    juniper.doc_type = "Loan Statement"
+    check(assess_item(juniper, tuesday).email_kind == "overdue", "Juniper should get one overdue catch-up")
+    mark_sent([juniper], tuesday)
+    check(assess_item(juniper, wednesday).kind == "wait", "Juniper was drafted again on the next day")
+    check(assess_item(juniper, date(2026, 11, 27)).kind == "email", "the gap never released the next touch")
+
+    # 3. Covered by test_precheck (partial and return set touches to 1 and last_touch to today).
+
+    # 4. A pasted Why Needed column is internal, and copying it into the reason fails the leak check.
+    pasted = "\n".join(
+        [
+            "Client,Email,Description,Deadline,Why Needed",
+            "Mordor Industrial,sauron@mordor.example,May 2026 bank statement,2026-09-09,Unusual volume of wire transfers to Nazgul Payroll",
+        ]
+    )
+    understood = interpret_text(pasted, date(2026, 9, 14))
+    row = understood.rows[0]
+    check(row["client_reason"] == "", "Why Needed was treated as client-facing")
+    check("Nazgul Payroll" in row["internal_notes"], row["internal_notes"])
+    leaked = Item(
+        id="LEAK",
+        client_name="Mordor Industrial",
+        contact_email="sauron@mordor.example",
+        doc_type="Bank Statement",
+        description="May 2026 bank statement",
+        client_reason="Unusual volume of wire transfers to Nazgul Payroll",
+        internal_notes="Unusual volume of wire transfers to Nazgul Payroll",
+        deadline=date(2026, 9, 9),
+        registered=date(2026, 8, 25),
+        schedule_anchor=date(2026, 8, 25),
+        owner_name="Gandalf",
+        status="Open",
+    )
+    draft = render_draft(
+        {"client_name": leaked.client_name, "email_kind": "overdue", "entries": [{"item": leaked, "action": assess_item(leaked, date(2026, 9, 14))}]},
+        FIRM,
+    )
+    check(draft_is_clean(draft, [leaked]) != [], "leak check accepted a Why Needed sentence in the draft")
+    safe = Item(**{**leaked.__dict__, "client_reason": "Needed for the quarterly bank reconciliation.", "id": "SAFE"})
+    safe_draft = render_draft(
+        {"client_name": safe.client_name, "email_kind": "overdue", "entries": [{"item": safe, "action": assess_item(safe, date(2026, 9, 14))}]},
+        FIRM,
+    )
+    check("Nazgul" not in safe_draft and draft_is_clean(safe_draft, [safe]) == [], safe_draft)
+
+    # 5. An item due today gets a first request, not "Deadline passed".
+    due = item_for("2026-09-14", "2026-09-14", 0)
+    due.doc_type = "Bank Statement"
+    due.period = "2026-08"
+    action = assess_item(due, date(2026, 9, 14))
+    check(action.kind == "email" and action.email_kind == "initial", f"due-today kind {action}")
+    due_draft = render_draft(
+        {"client_name": due.client_name, "email_kind": action.email_kind, "entries": [{"item": due, "action": action}]},
+        FIRM,
+    )
+    check("Deadline passed" not in due_draft and "We need the documents below" in due_draft, due_draft)
+    sunday = item_for("2026-09-13", "2026-09-14", 0)
+    check(assess_item(sunday, date(2026, 9, 14)).email_kind == "initial", "Sunday registration due Monday was overdue")
+
+    # 6. Demo realism is in test_demo, including holidays and closed months.
+
+    # 7. Formatting: human period, dollar amount, no bracket sender, grammatical overdue sentence.
+    check("October 2026" in format_period_sample(), "period formatter")
+    bare = Item(
+        id="BARE",
+        client_name="No Owner LLC",
+        contact_email="ap@noowner.example",
+        doc_type="Invoice",
+        description="Vendor invoice",
+        client_reason="Large capital expenditure. Needed to decide asset versus expense treatment",
+        deadline=date(2026, 9, 12),
+        registered=date(2026, 8, 31),
+        schedule_anchor=date(2026, 8, 31),
+        touches_sent=2,
+        last_touch=date(2026, 9, 8),
+        amount="847000",
+        status="Open",
+    )
+    bare_action = assess_item(bare, date(2026, 9, 14))
+    bare_draft = render_draft(
+        {"client_name": bare.client_name, "email_kind": bare_action.email_kind, "entries": [{"item": bare, "action": bare_action}]},
+        {"firm_name": "Northline Ledger Co."},
+    )
+    check("[Sender Name]" not in bare_draft, bare_draft)
+    check("Setup is incomplete" in bare_draft and "Northline Ledger Co." in bare_draft, "missing sender was not flagged")
+    check("held up:" not in bare_draft, bare_draft)
+    check("this work is held up." in bare_draft, bare_draft)
+    check("$847,000" in bare_draft, bare_draft)
+
+    # 8. Spaced and dashed cards that pass Luhn are masked. A non-Luhn run is not.
+    spaced, found = mask_sensitive("Card 4111 1111 1111 1111 and 4111-1111-1111-1111.")
+    check(found and "4111 1111 1111 1111" not in spaced and spaced.count("ending 1111") == 2, spaced)
+    untouched, found_bad = mask_sensitive("Not a card 4111 1111 1111 1112.")
+    check("4111 1111 1111 1112" in untouched, untouched)
+
+    # Client reply pauses chasing. Month 2026-1 does not match 2026-10. Time zone.
+    paused = item_for("2026-11-02", "2026-11-20", 1)
+    paused.last_touch = date(2026, 11, 16)
+    note_client_reply(paused, tuesday)
+    check(paused.status == "Paused", "reply did not pause the item")
+    check(assess_item(paused, wednesday).kind == "paused", "a reply did not pause the next day")
+    check(not periods_overlap("2026-1", "2026-10"), "January matched October")
+    check(periods_overlap("2026-06", "June 2026"), "June did not match 2026-06")
+    check(periods_overlap("2026-06 to 2026-08", "2026-07"), "a range missed July")
+    moment = datetime(2026, 11, 25, 7, 30, tzinfo=ZoneInfo("UTC"))
+    check(today_for(DEFAULT_TIMEZONE, moment) == date(2026, 11, 24), "Los Angeles date was wrong")
+    check(today_for("America/New_York", moment) == date(2026, 11, 25), "New York date was wrong")
+    check(DEFAULT_TIMEZONE == "America/Los_Angeles", "default zone drifted")
+
+
+def format_period_sample() -> str:
+    from core.engine import format_period
+    return format_period("2026-10")
+
+
 def main() -> int:
     test_worked_examples()
     test_date_rules()
@@ -513,6 +691,7 @@ def main() -> int:
     test_pdfs()
     test_privacy_and_intake()
     test_demo()
+    test_qa_fixes()
     test_repo_shape()
     if FAILURES:
         print(f"{len(FAILURES)} failed")

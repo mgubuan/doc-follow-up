@@ -19,7 +19,8 @@ Copy from `To:` downward when they are ready to send it themselves.
 - Initials are enough. If the person writes `M.E.` or `ABC LLC`, keep that. Do not expand initials into a guessed legal name.
 - Do not invent a first name from an email address. A blank salutation becomes `Hello,`.
 - Mask a Social Security number (`123-45-6789` or a labeled 9-digit SSN) as `***-**-****`.
-- Mask a labeled account, routing, or ABA number, and any standalone 13- to 16-digit number. Keep the last four digits (`account ending 4421`).
+- Mask a labeled account, routing, or ABA number. Keep the last four digits (`account ending 4421`).
+- Mask a card number written with or without spaces or dashes when the digits pass the Luhn check. Keep the last four. A digit run that fails Luhn is left as written, so a phone number or an invoice id is not eaten.
 - Do not ask the client or the bookkeeper to paste a full SSN, a full account number, a password, or a bank login into the chat.
 - Submission instructions tell the client to download a PDF and reply with the file. They never ask for a password or a login.
 

@@ -18,7 +18,7 @@ Do not load stages 01–03.
 1. Show the check, including a REQUEST_MAY_BE_WRONG flag when the file points at a different document.
 2. Ask for Accept, Reject, or Override.
 3. Accept or Override: status `Accepted`. The request is closed.
-4. Reject: status `Returned`, touch count 0, schedule anchor today. Draft the thank-you reply from `core/email-templates.md`. The ask is what is still needed. If the person agrees the request was wrong, the ask is the corrected document, not the original bad number. Save the draft. Do not send it.
+4. Reject: status `Returned`, touch count 1, last contact today, schedule anchor today. Draft the thank-you reply from `core/email-templates.md`. The ask is what is still needed. If the person agrees the request was wrong, the ask is the corrected document, not the original bad number. That draft is today's touch. Do not also queue a chase email. Do not send it.
 5. A rejection draft still has to pass the internal-notes check and the tone check.
 
 ## Output

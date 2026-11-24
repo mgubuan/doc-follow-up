@@ -1,2 +1,9 @@
 __pycache__/
 *.pyc
+
+# The empty header lives in shared/tracker.template.csv.
+# shared/tracker.csv is the local working copy and can hold client names.
+shared/tracker.csv
+shared/clients/
+stages/*/output/*
+!stages/*/output/.gitkeep

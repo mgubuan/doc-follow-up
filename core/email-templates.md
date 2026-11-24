@@ -8,6 +8,12 @@ The `DRAFT` line is for the bookkeeper. Copy from `To:` down when a person is re
 
 `[Greeting]` is `Hi [salutation],` or `Hello,` when the salutation is blank.
 
+A first request says "We need the documents below." A later one says "We still need the documents below."
+
+Write dates as `Thursday, September 24, 2026` and periods as `October 2026`. Write amounts as `$14,999`. If the row has no sender, sign with the firm name and tell the bookkeeper setup is incomplete. Never print `[Sender Name]`.
+
+Include `How to send:` with the firm's submission line, or "Reply to this email with the file attached."
+
 ## One client, one or more items
 
 Use this shape for an initial request, a reminder, and a mix of the two in the same email. The subject does not say which touch it is.

@@ -10,7 +10,9 @@ Every stored date is `YYYY-MM-DD`. Do not write `MM/DD/YYYY`. A pasted `04/15/20
 
 ## Business days
 
-A business day is Monday through Friday. Saturday and Sunday are never email days. A firm may pass a list of holiday dates. Those dates are not business days. If they pass no list, only weekends are skipped.
+A business day is Monday through Friday, excluding US federal holidays (New Year's Day, Martin Luther King Jr. Day, Washington's Birthday, Memorial Day, Juneteenth, Independence Day, Labor Day, Columbus Day, Veterans Day, Thanksgiving, and Christmas, with the usual Saturday-to-Friday and Sunday-to-Monday observation). A firm may add more dates. It cannot turn a federal holiday into a send day.
+
+"Today" is the date in the firm's time zone. The default is `America/Los_Angeles`. A firm can set another IANA zone. A clock time with no zone is read as UTC, then converted.
 
 When a computed date is not a business day, move it forward to the next business day if that day is still strictly before the deadline. Otherwise move it backward to the previous business day. If it still cannot land strictly before the deadline, drop that touch. Two anchors that land on the same business day become one email.
 
@@ -55,14 +57,11 @@ Build the plan once from the anchor, the deadline, and the frozen tier. Ignore a
 
 **Tight.** Anchor, anchor plus 1 calendar day, anchor plus 2 calendar days, then the first business day after the deadline. Do not add a further email on every remaining day. That daily series is what used to burn the cap before the deadline.
 
-**Overdue** (the deadline is already before the anchor). All four emails acknowledge that the deadline has passed:
+**Overdue** (the deadline is already before the anchor). All four emails acknowledge that the deadline has passed, and each is two business days after the one before it. The first is the first business day on or after the anchor.
 
-1. The first business day on or after the anchor.
-2. One business day later.
-3. Two business days after that.
-4. Two business days after that.
+The first request may land on the deadline. Later reminders stay strictly before the deadline. An item registered on its due date, or registered the day before a Monday deadline, gets that request on the due date. The words "Deadline passed" are for a day after the deadline, not for the due date itself.
 
-Snap every pre-deadline candidate onto a business day strictly before the deadline, drop the ones that cannot, and collapse duplicates. Keep at most three pre-deadline dates. The overdue date is always last for a comfortable, moderate, or tight item, so the plan never tells you to call before the item is due.
+Snap every candidate onto a business day, drop the ones that cannot fit, and collapse duplicates. Keep at most three dates on or before the deadline. The overdue date is the first business day after the deadline, so the plan does not tell you to call before the item is due.
 
 ## What to do today
 
@@ -71,19 +70,26 @@ Walk the statuses in this order.
 1. **Accepted.** Closed. No email.
 2. **Received.** A person still has to review it. No chase email.
 3. **Bad contact.** The address bounced or the contact is the wrong person. Do not email. Ask the firm for a working email or a phone number. Do not keep writing until the cap. A phone number on the row is for a call, not a reason to try the dead address again.
-4. **Cap reached.** `touches_sent` is 4 or more, or every planned date has already been used.
+4. **Paused.** The client replied, and the reply was not a file you have logged. Do not email again until a person has read it and resumed the chase.
+5. **Cap reached.** `touches_sent` is 4 or more, or every planned date has already been used.
    - If today is after the deadline, the status is **Call needed**. Do not draft another email. The internal note names the items, the phone on file, and the deadline. It does not quote internal notes to the client, because it is not sent to the client.
    - If today is on or before the deadline, hold. Do not email and do not call yet. The call starts on the first business day after the deadline.
-5. **Open, Partial, or Returned.** Look at `plan[touches_sent]`, the next unsent date.
+6. **Open, Partial, or Returned.** Look at `plan[touches_sent]`, the next unsent date. The next email is the later of that date and two business days after `last_touch`.
    - If `last_touch` is today, send nothing else today. One email per client per day.
-   - If that date is after today, wait. The next touch is that date.
-   - If that date is today or earlier, and today is a business day, send one email today. A missed date is caught up with that single email. Do not send one email per missed day, and do not skip the initial just because a later anchor has arrived.
-   - If that date is today or earlier, and today is not a business day, wait until the next business day.
+   - If the next email is after today, wait.
+   - If it is today or earlier, and today is a business day, send one email today. Every missed date is caught up in that single email. Do not send one email per missed day, and do not email again the next business day. The gap is two business days: a Tuesday send is not followed by a Wednesday send.
+   - If today is not a business day, wait until the next one.
+
+## Mark sent
+
+Drafting does not record a send. After a person sends the email, mark it sent: add 1 to `touches_sent` and set `last_touch` to today. Doing that twice the same day does not count two emails. The next run then waits for the gap instead of drafting the same message again.
+
+A partial file and a rejection each count as that send. Set `touches_sent` to 1 and `last_touch` to today when they happen, and draft the thank-you in the same step. Do not also queue a chase email that day. The partial thank-you names what arrived and asks only for what is still open.
 
 Email kind, for the one email you do send:
 
 - **overdue** when today is after the deadline. Say the deadline has passed and one factual sentence about what is held up, using the client-facing reason.
-- **initial** when `touches_sent` is 0 and the deadline has not passed.
+- **initial** when `touches_sent` is 0 and today is on or before the deadline. Say "we need", not "we still need".
 - **reminder** otherwise.
 
 ## Grouping
@@ -100,14 +106,16 @@ The call flag applies only after the planned emails are used up (or the stored c
 
 A file coming back from the client is a response. The old silence streak does not carry forward.
 
-- **Partial** (some lines arrived, some did not). Status becomes Partial. Mark the covered lines received. Set `touches_sent` to 0 and set the schedule anchor to today. Keep chasing the open lines only. Do not mark the whole request received.
-- **Returned** (a person rejected the file). Status becomes Returned. Set `touches_sent` to 0 and set the schedule anchor to the review date. Freeze a new tier from that anchor to the same deadline. The rejection email is the new touch 1, and it is still a draft a person approves.
+- **Partial** (some lines arrived, some did not). Status becomes Partial. Mark the covered lines received. The thank-you is today's touch: `touches_sent` is 1 and `last_touch` is today. Keep chasing the open lines only, after the gap. Do not mark the whole request received.
+- **Returned** (a person rejected the file). Status becomes Returned. The rejection is today's touch: `touches_sent` is 1 and `last_touch` is today. The schedule anchor is the review date, and the tier freezes again from that anchor. It is still a draft a person approves. It is not a second chase email the same day.
 
 ## Client-facing text
 
 A draft may use the description, the period, the amount, the client-facing reason, the document type, the deadline, the salutation, the open lines, and the sender's name and title.
 
-A draft must not quote or paraphrase `internal_notes`. If the client-facing reason is blank, do not fill it from the notes. Say the item is needed for the books on file. Before a draft is shown, check that no four-word run from the internal notes appears in it, unless that same run is already in the client-facing fields.
+A draft must not quote or paraphrase `internal_notes`. If the client-facing reason is blank, do not fill it from the notes. Say the item is needed for the books on file. A column named Reason, Why Needed, or Context is an internal note until the person writes a separate client-facing reason. Before a draft is shown, check that no four-word run from the internal notes appears in it. Copying that run into the client-facing reason does not make it safe.
+
+Dates in a client email are written as `Thursday, September 24, 2026`. A period `2026-10` is written as `October 2026`. Amounts use a dollar sign and thousands separators. If the row has no sender name, use the firm name and say setup is incomplete. Never leave a `[Sender Name]` bracket. The first request says "we need". A later one says "we still need". Include a "How to send" line.
 
 ## Salutation
 
@@ -119,13 +127,13 @@ Absolute dates, so they do not move with the clock. `tests/run_tests.py` reads t
 
 ```examples
 id | anchor | deadline | touches | as_of | kind | next | tier | email_kind
-comfortable-initial | 2026-09-06 | 2026-09-17 | 0 | 2026-09-07 | email | 2026-09-07 | comfortable | initial
+comfortable-initial | 2026-09-06 | 2026-09-17 | 0 | 2026-09-08 | email | 2026-09-08 | comfortable | initial
 comfortable-reminder | 2026-09-06 | 2026-09-17 | 2 | 2026-09-14 | email | 2026-09-14 | comfortable | reminder
 cap-before-deadline | 2026-09-06 | 2026-09-17 | 4 | 2026-09-17 | hold | 2026-09-18 | comfortable |
 cap-after-deadline | 2026-09-06 | 2026-09-17 | 4 | 2026-09-18 | call |  | comfortable |
 moderate-not-saturday | 2026-09-10 | 2026-09-19 | 1 | 2026-09-12 | wait | 2026-09-14 | moderate |
 moderate-monday | 2026-09-10 | 2026-09-19 | 1 | 2026-09-14 | email | 2026-09-14 | moderate | reminder
-weekend-catchup | 2026-09-04 | 2026-10-05 | 0 | 2026-09-05 | wait | 2026-09-07 | comfortable |
+weekend-catchup | 2026-09-04 | 2026-10-05 | 0 | 2026-09-05 | wait | 2026-09-08 | comfortable |
 tight-no-early-call | 2026-09-14 | 2026-09-18 | 3 | 2026-09-18 | wait | 2026-09-21 | tight |
 tight-overdue-email | 2026-09-14 | 2026-09-18 | 3 | 2026-09-21 | email | 2026-09-21 | tight | overdue
 ten-day-no-early-call | 2026-09-14 | 2026-09-24 | 2 | 2026-09-24 | wait | 2026-09-25 | comfortable |
@@ -135,7 +143,7 @@ initial-not-skipped | 2026-09-14 | 2026-09-28 | 0 | 2026-09-14 | email | 2026-09
 
 Reading the rows:
 
-- `comfortable-initial` is registered on Sunday 2026-09-06. The initial goes Monday 2026-09-07. The window is 11 days, so halfway is day 5, which is Friday 2026-09-11, not Saturday.
+- `comfortable-initial` is registered on Sunday 2026-09-06. Monday 2026-09-07 is Labor Day, so the initial goes Tuesday 2026-09-08. The window is 11 days, so halfway is day 5, which is Friday 2026-09-11, not Saturday. US federal holidays are not email days.
 - `moderate-not-saturday` is the day-2 reminder. Day 2 falls on Saturday 2026-09-12, so the email is Monday 2026-09-14. It is not sent on Saturday, and it is not delayed to Tuesday 2026-09-15.
 - `tight-no-early-call` has already used its three pre-deadline emails by the deadline. The fourth email is the overdue notice on Monday 2026-09-21. Nobody is told to call on Friday 2026-09-18.
 - `ten-day-no-early-call` has a 10-day window. Halfway and the three-days-before date land on the same Monday, so the plan has three emails. The last of them is the day after the deadline. There is no call on the deadline.

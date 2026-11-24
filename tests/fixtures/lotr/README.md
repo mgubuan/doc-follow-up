@@ -14,14 +14,16 @@ The old "next follow-up" column is not stored. The rules recompute it. Where the
 
 | Row | What the old files did | What the rules say on 2026-09-14 |
 |---|---|---|
-| REQ-001 | Next touch 2026-09-14, which happens to match | Reminder. Grouped with REQ-002. |
-| REQ-002 | Next touch was the initial, which matches | Initial today. Not skipped. |
-| REQ-003 | Open in the spreadsheet, accepted the next day in the CSV | Overdue email today. Not a call yet. |
+| REQ-001 | Next touch 2026-09-14, which happens to match the plan slot | Plan slot Monday 2026-09-14. Last contact was Friday, so the two-business-day gap holds the email until Tuesday. |
+| REQ-002 | Next touch was the initial, which matches | Initial on 2026-09-14. Not skipped. |
+| REQ-003 | Open in the spreadsheet, accepted the next day in the CSV | Overdue email is waiting on the gap, because the last logged contact was Sunday. Not a call yet. |
 | REQ-004 | Next touch Saturday 2026-09-19 | Monday 2026-09-21. |
 | REQ-005 | Open, with "phone call" buried in the notes | Status `Call needed`. No email. |
-| REQ-007 | Next touch 2026-09-21, skipping the initial | Initial today. Salutation is blank, so the draft says Hello. |
+| REQ-007 | Next touch 2026-09-21, skipping the initial | Initial on 2026-09-14. Salutation is blank, so the draft says Hello. |
 | REQ-008 | Open, bounce buried in the notes, count already 4 | Status `Bad contact`. No email. |
-| REQ-009 | Next touch 2026-09-15, and elevenses only in the notes | Email Monday 2026-09-14. Both vendors are lines. |
+| REQ-009 | Next touch 2026-09-15, and elevenses only in the notes | The plan slot is Monday 2026-09-14. The last contact was Saturday, so the gap holds the email until Tuesday. Both vendors are lines. |
+
+Contact addresses in this fixture use `.example`. Monday 2026-09-07 is Labor Day, so it is not an email day.
 
 ## Documents
 

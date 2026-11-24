@@ -32,7 +32,11 @@ python3 -m pip install -r requirements.txt
 python3 tests/run_tests.py
 ```
 
-The suite checks the worked examples in `core/follow-up-rules.md` against `core/engine.py`, the fixture in `tests/fixtures/lotr/` as of 2026-09-14 (including the purchase-order and wrong-month files), privacy masking, and the demo firm on every day of 2026.
+`requirements.txt` includes `pypdf`. The engine uses it to read text from a digital PDF during the received-file check. A scanned image with no text layer is not read that way. You still tell the agent what a scan says, or a person opens it.
+
+The suite checks the worked examples in `core/follow-up-rules.md` against `core/engine.py`, the fixture in `tests/fixtures/lotr/` as of 2026-09-14 (the engine reads those PDFs), privacy masking, mark-sent, the two-business-day gap, and the demo firm on every day of 2026 including federal holidays.
+
+"Today" is the date in `America/Los_Angeles` unless the firm sets another time zone. `shared/tracker.csv` is gitignored so a working client list is not committed. The empty header is `shared/tracker.template.csv`. Copy it to `shared/tracker.csv` to start.
 
 ## Rules that do not change
 

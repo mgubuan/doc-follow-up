@@ -43,9 +43,13 @@ Draft one email per client who is due today, from `core/email-templates.md`. Run
 
 Do not draft an email for Call needed, Bad contact, Received, or Accepted. Show the internal call note or the bad-contact note instead.
 
-## 4. Hand back the tracker
+## 4. Mark sent, then hand back the tracker
 
-Return the full tracker as CSV in the schema column order, with computed `next_touch` values and ISO dates. Remind them this is the file to paste next time.
+Drafts are not sent, and they are not recorded as sent. When the person says they sent one, mark those items sent: `touches_sent` increases by 1 and `last_touch` becomes today, in the firm's time zone (default `America/Los_Angeles`). Marking the same item twice on the same day does not count a second email. A later run uses that count, so it does not draft the same email again the next morning.
+
+A column named Reason, Why Needed, or Context is an internal note until the person confirms a separate client-facing reason.
+
+Return the full tracker as CSV in the schema column order, with the updated counts and ISO dates. Remind them this is the file to paste next time. Do not write it into the repo.
 
 Print this line once, above the kit, not inside a client email:
 

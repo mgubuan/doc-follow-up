@@ -21,6 +21,7 @@ Do not load stages 01, 04, or 05. Do not put `internal_notes` into the prompt yo
 4. Salutation from the field, or `Hello,`.
 5. Run the internal-notes check. Fix a draft that fails it before showing it.
 6. Show the drafts. A person edits and sends them. Do not send.
+7. When they say a draft was sent, mark those items sent (`touches_sent` + 1, `last_touch` = today in the firm time zone, default America/Los_Angeles). Do not mark them sent just because you drafted them. Marking the same item again today does not count another email.
 
 ## Output
 

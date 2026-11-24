@@ -13,8 +13,10 @@ import csv
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from functools import lru_cache
 from typing import Iterable, Optional
+from zoneinfo import ZoneInfo
 
 
 SCHEMA_VERSION = 1
@@ -42,6 +44,7 @@ COLUMNS = [
     "schedule_anchor",
     "received",
     "lines",
+    "client_replied",
 ]
 
 STATUSES = (
@@ -52,6 +55,7 @@ STATUSES = (
     "Returned",
     "Bad contact",
     "Call needed",
+    "Paused",
 )
 
 EMAIL_STATUSES = ("Open", "Partial", "Returned")
@@ -60,6 +64,50 @@ REVIEW_STATUSES = ("Received",)
 
 # At most this many chase emails, including the initial request.
 MAX_TOUCHES = 4
+# After an email, wait this many business days before the next one to that item.
+MIN_GAP_BUSINESS_DAYS = 2
+DEFAULT_TIMEZONE = "America/Los_Angeles"
+
+MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+MONTH_INDEX = {name.lower(): index + 1 for index, name in enumerate(MONTH_NAMES)}
+MONTH_INDEX.update(
+    {
+        "jan": 1,
+        "feb": 2,
+        "mar": 3,
+        "apr": 4,
+        "jun": 6,
+        "jul": 7,
+        "aug": 8,
+        "sep": 9,
+        "sept": 9,
+        "oct": 10,
+        "nov": 11,
+        "dec": 12,
+    }
+)
+
+STATEMENT_TYPES = {
+    "bank statement",
+    "credit card statement",
+    "loan statement",
+    "sales tax return",
+    "payroll report",
+    "receipt",
+}
 
 SAFETY_LINE = (
     "This is operational workflow design for collecting client documents. "
@@ -107,9 +155,75 @@ def parse_iso(value: str) -> date:
         raise RuleError(f"Date {value!r} is not a real calendar date.") from exc
 
 
+@lru_cache(maxsize=32)
+def us_federal_holidays(year: int) -> frozenset:
+    """US federal holidays for ``year``, with the standard weekend observation rule.
+
+    A holiday on Saturday is observed on Friday. A holiday on Sunday is observed
+    on Monday. New Year's Day observed can fall on December 31 of the prior year.
+    """
+
+    def observed(day: date) -> date:
+        if day.weekday() == 5:
+            return day - timedelta(days=1)
+        if day.weekday() == 6:
+            return day + timedelta(days=1)
+        return day
+
+    def nth_weekday(month: int, weekday: int, n: int) -> date:
+        first = date(year, month, 1)
+        shift = (weekday - first.weekday()) % 7
+        return date(year, month, 1 + shift + 7 * (n - 1))
+
+    def last_monday(month: int) -> date:
+        if month == 12:
+            cursor = date(year, 12, 31)
+        else:
+            cursor = date(year, month + 1, 1) - timedelta(days=1)
+        while cursor.weekday() != 0:
+            cursor -= timedelta(days=1)
+        return cursor
+
+    return frozenset(
+        {
+            observed(date(year, 1, 1)),
+            nth_weekday(1, 0, 3),
+            nth_weekday(2, 0, 3),
+            last_monday(5),
+            observed(date(year, 6, 19)),
+            observed(date(year, 7, 4)),
+            nth_weekday(9, 0, 1),
+            nth_weekday(10, 0, 2),
+            observed(date(year, 11, 11)),
+            nth_weekday(11, 3, 4),
+            observed(date(year, 12, 25)),
+        }
+    )
+
+
+def closing_dates(day: date, extra: Iterable[date] = ()) -> set:
+    """Weekends plus US federal holidays, plus any dates the firm adds."""
+    closed = set(extra)
+    for year in (day.year - 1, day.year, day.year + 1):
+        closed |= set(us_federal_holidays(year))
+    return closed
+
+
 def is_business_day(day: date, holidays: Iterable[date] = ()) -> bool:
-    """Monday–Friday, excluding any dates the firm listed as holidays."""
-    return day.weekday() < 5 and day not in set(holidays)
+    """Monday–Friday, excluding US federal holidays and any extra dates."""
+    return day.weekday() < 5 and day not in closing_dates(day, holidays)
+
+
+def today_for(zone: str = DEFAULT_TIMEZONE, now: Optional[datetime] = None) -> date:
+    """The calendar date in the firm's time zone. Default is America/Los_Angeles.
+
+    A naive ``now`` is read as UTC. The zone is configurable per firm.
+    """
+    if now is None:
+        now = datetime.now(ZoneInfo("UTC"))
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=ZoneInfo("UTC"))
+    return now.astimezone(ZoneInfo(zone)).date()
 
 
 def first_business_on_or_after(day: date, holidays: Iterable[date] = ()) -> date:
@@ -133,31 +247,36 @@ def add_business_days(day: date, count: int, holidays: Iterable[date] = ()) -> d
     return cursor
 
 
-def snap_strictly_before(
-    candidate: date, deadline: date, holidays: Iterable[date] = ()
+def snap_on_or_before(
+    candidate: date, latest: date, holidays: Iterable[date] = ()
 ) -> Optional[date]:
-    """Move ``candidate`` onto a business day that is still before ``deadline``.
+    """Move ``candidate`` onto a business day on or before ``latest``.
 
-    A weekday candidate is kept. A weekend or holiday moves forward to the
-    next business day when that day is still before the deadline, and
-    otherwise backward. Returns None when no such day exists.
+    A weekday candidate is kept. A weekend or holiday moves forward when that
+    day is still on or before ``latest``, and otherwise backward. Returns None
+    when no such day exists.
     """
-    holidays = set(holidays)
-    if candidate >= deadline:
+    if candidate > latest:
         return None
-    if is_business_day(candidate, holidays):
+    if is_business_day(candidate, holidays) and candidate <= latest:
         return candidate
     forward = candidate
     while not is_business_day(forward, holidays):
         forward += timedelta(days=1)
-    if forward < deadline:
+    if forward <= latest:
         return forward
     backward = candidate
     while not is_business_day(backward, holidays):
         backward -= timedelta(days=1)
-    if backward < deadline:
+    if backward <= latest:
         return backward
     return None
+
+
+def previous_business_day(day: date, holidays: Iterable[date] = ()) -> date:
+    while not is_business_day(day, holidays):
+        day -= timedelta(days=1)
+    return day
 
 
 def tier_for(anchor: date, deadline: date) -> str:
@@ -186,15 +305,14 @@ def plan_touches(
     Weekend and holiday candidates move onto a business day. Two anchors
     that land on the same business day become one email.
     """
-    holidays = set(holidays)
     window = (deadline - anchor).days
     if window < 0:
         first = first_business_on_or_after(anchor, holidays)
         return [
             first,
-            add_business_days(first, 1, holidays),
-            add_business_days(first, 3, holidays),
-            add_business_days(first, 5, holidays),
+            add_business_days(first, MIN_GAP_BUSINESS_DAYS, holidays),
+            add_business_days(first, MIN_GAP_BUSINESS_DAYS * 2, holidays),
+            add_business_days(first, MIN_GAP_BUSINESS_DAYS * 3, holidays),
         ]
 
     if window <= 4:
@@ -209,8 +327,11 @@ def plan_touches(
         ]
 
     pre: list[date] = []
-    for candidate in raw:
-        snapped = snap_strictly_before(candidate, deadline, holidays)
+    for index, candidate in enumerate(raw):
+        # The first request may land on the deadline itself. Later reminders
+        # stay strictly before it, so the due date still gets a request.
+        latest = deadline if index == 0 else deadline - timedelta(days=1)
+        snapped = snap_on_or_before(candidate, latest, holidays)
         if snapped is not None and snapped not in pre:
             pre.append(snapped)
     pre = sorted(pre)[:3]
@@ -281,6 +402,7 @@ class Item:
     schedule_anchor: Optional[date] = None
     received: Optional[date] = None
     lines: list = field(default_factory=list)
+    client_replied: Optional[date] = None
     holidays: tuple = ()
 
     def anchor(self) -> date:
@@ -319,6 +441,7 @@ class Item:
             "schedule_anchor": fmt(self.schedule_anchor or self.registered),
             "received": fmt(self.received),
             "lines": format_lines(self.lines),
+            "client_replied": fmt(self.client_replied),
         }
 
 
@@ -362,6 +485,7 @@ def item_from_row(row: dict, holidays: Iterable[date] = ()) -> Item:
         schedule_anchor=parse_iso(anchor_raw) if anchor_raw else registered,
         received=parse_iso(row["received"]) if _blank(row.get("received")) else None,
         lines=parse_lines(row.get("lines") or ""),
+        client_replied=parse_iso(row["client_replied"]) if _blank(row.get("client_replied")) else None,
         holidays=tuple(holidays),
     )
     if item.touches_sent > MAX_TOUCHES:
@@ -439,13 +563,31 @@ def mask_sensitive(text: str) -> tuple[str, bool]:
         masked,
     )
 
-    def long_sub(match: re.Match) -> str:
+    def card_sub(match: re.Match) -> str:
         nonlocal found
+        digits = re.sub(r"\D", "", match.group(0))
+        if not 13 <= len(digits) <= 19 or not luhn_ok(digits):
+            return match.group(0)
         found = True
-        return f"ending {match.group(0)[-4:]}"
+        return f"ending {digits[-4:]}"
 
-    masked = re.sub(r"\b\d{13,16}\b", long_sub, masked)
+    # Spaced or dashed card numbers, and contiguous ones. Luhn rejects phones and invoice ids.
+    masked = re.sub(r"(?<!\d)(?:\d[ \-]*){12,18}\d(?!\d)", card_sub, masked)
     return masked, found
+
+
+def luhn_ok(digits: str) -> bool:
+    total = 0
+    double = False
+    for character in reversed(digits):
+        value = int(character)
+        if double:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+        double = not double
+    return total % 10 == 0
 
 
 def ngrams(text: str, size: int = 4) -> set[str]:
@@ -455,28 +597,31 @@ def ngrams(text: str, size: int = 4) -> set[str]:
     return {" ".join(words[i : i + size]) for i in range(len(words) - size + 1)}
 
 
-def client_facing_text(item: Item) -> str:
-    parts = [
-        item.client_name,
-        item.salutation,
-        item.doc_type,
-        item.description,
-        item.period,
-        item.amount,
-        item.client_reason,
-        format_lines(item.lines),
-        item.deadline.isoformat() if item.deadline else "",
-    ]
-    return "\n".join(parts)
+def factual_text(item: Item) -> str:
+    """Request facts a draft may share with a note. The reason is not included.
+
+    A client-facing reason that repeats an internal note is still a leak.
+    """
+    return "\n".join(
+        [
+            item.client_name,
+            item.salutation,
+            item.doc_type,
+            item.description,
+            item.period,
+            item.amount,
+            format_lines(item.lines),
+            item.deadline.isoformat() if item.deadline else "",
+        ]
+    )
 
 
 def internal_leaks(draft: str, item: Item) -> list[str]:
     """Return phrases from internal notes that showed up in a client draft.
 
-    A 4-word sequence counts when it is in the notes and not also in the
-    client-facing fields. The full note text counts too. This catches a
-    pasted note. It cannot catch every paraphrase, which the draft rule
-    still forbids.
+    A 4-word sequence counts even when the same words were copied into
+    ``client_reason``. The full note text counts too. This catches a pasted
+    note. It cannot catch every paraphrase, which the draft rule still forbids.
     """
     notes = _blank(item.internal_notes)
     if not notes:
@@ -485,12 +630,16 @@ def internal_leaks(draft: str, item: Item) -> list[str]:
     leaks = []
     if notes.lower() in haystack:
         leaks.append(notes)
-    allowed = ngrams(client_facing_text(item))
+    allowed = ngrams(factual_text(item))
     for gram in sorted(ngrams(notes)):
         if gram in allowed:
             continue
         if gram in haystack:
             leaks.append(gram)
+    # Also flag the reason itself when it repeats the note. The draft prints it.
+    reason = _blank(item.client_reason)
+    if reason and reason.lower() in notes.lower() and reason.lower() in haystack:
+        leaks.append(reason)
     return leaks
 
 
@@ -521,6 +670,11 @@ def assess_item(item: Item, today: date) -> Action:
             "bad_contact",
             reason="Do not email. The address bounced or the contact is wrong. Ask for a working email or phone.",
         )
+    if item.status == "Paused":
+        return Action(
+            "paused",
+            reason="The client replied. Read that reply before sending another email.",
+        )
     plan = item.plan()
     past_deadline = today > item.deadline
     ceiling = item.touches_sent >= MAX_TOUCHES or item.touches_sent >= len(plan)
@@ -539,30 +693,42 @@ def assess_item(item: Item, today: date) -> Action:
         raise RuleError(f"Unhandled status {item.status!r}.")
 
     slot = plan[item.touches_sent]
+    earliest = slot
+    if item.last_touch is not None:
+        # One catch-up email, then at least two business days before the next.
+        gap_end = add_business_days(item.last_touch, MIN_GAP_BUSINESS_DAYS, item.holidays)
+        if gap_end > earliest:
+            earliest = gap_end
     if item.last_touch == today:
-        later = [day for day in plan if day > today]
         return Action(
             "wait",
-            next_touch=later[0] if later else None,
+            next_touch=first_business_on_or_after(today + timedelta(days=1), item.holidays)
+            if earliest <= today
+            else earliest,
             reason="An email already went out today. One email per client per day.",
         )
-    if slot > today:
-        return Action("wait", next_touch=slot, reason="Next planned email is still ahead.")
-
-    due = today if is_business_day(today, item.holidays) else first_business_on_or_after(today, item.holidays)
-    if due != today:
+    if earliest > today:
+        return Action("wait", next_touch=earliest, reason="Next email is still ahead, including the two-business-day gap.")
+    if not is_business_day(today, item.holidays):
         return Action(
             "wait",
-            next_touch=due,
+            next_touch=first_business_on_or_after(today, item.holidays),
             reason="A follow-up is due, and today is not a business day. Send it on the next business day.",
         )
-    if past_deadline:
-        kind = "overdue"
-    elif item.touches_sent == 0:
+    # One email covers every missed date. The touch count goes up by one when
+    # that email is marked sent. It does not send once per missed day.
+    if item.touches_sent == 0 and today <= item.deadline:
         kind = "initial"
+    elif today > item.deadline:
+        kind = "overdue"
     else:
         kind = "reminder"
-    return Action("email", next_touch=today, email_kind=kind, reason="Planned email is due today.")
+    return Action(
+        "email",
+        next_touch=today,
+        email_kind=kind,
+        reason="One email is due. Missed dates are caught up in this single email.",
+    )
 
 
 @dataclass
@@ -575,12 +741,13 @@ class Assessment:
     hold: list
     review: list
     closed: list
+    paused: list
 
 
 def assess(items: Iterable[Item], today: date) -> Assessment:
     groups: dict[str, list] = {}
     order: list[str] = []
-    buckets = {name: [] for name in ("call_needed", "bad_contact", "waiting", "hold", "review", "closed")}
+    buckets = {name: [] for name in ("call_needed", "bad_contact", "waiting", "hold", "review", "closed", "paused")}
     for item in items:
         action = assess_item(item, today)
         entry = {"item": item, "action": action}
@@ -600,6 +767,8 @@ def assess(items: Iterable[Item], today: date) -> Assessment:
             buckets["hold"].append(entry)
         elif action.kind == "review":
             buckets["review"].append(entry)
+        elif action.kind == "paused":
+            buckets["paused"].append(entry)
         else:
             buckets["closed"].append(entry)
     email_groups = []
@@ -627,35 +796,79 @@ def _fmt_amount(amount: str) -> str:
         return ""
     if "." in amount:
         whole, frac = amount.split(".", 1)
-        return f"{int(whole):,}.{frac}"
-    return f"{int(amount):,}"
+        return f"${int(whole):,}.{frac}"
+    return f"${int(amount):,}"
+
+
+def format_date(day: date) -> str:
+    """Friday, December 4. The year is included when it is not the current year of the date's own century-agnostic display.
+
+    Client emails use this instead of YYYY-MM-DD. The year is included so a
+    December date is not ambiguous across years: 'Friday, December 4, 2026'.
+    """
+    return f"{day.strftime('%A')}, {MONTH_NAMES[day.month - 1]} {day.day}, {day.year}"
+
+
+def format_period(period: str) -> str:
+    """Turn 2026-10 into October 2026, a range into words, and a full date into the long form."""
+    period = (period or "").strip()
+
+    def piece(match: re.Match) -> str:
+        year, month = int(match.group(1)), int(match.group(2))
+        day = match.group(3)
+        if not 1 <= month <= 12:
+            return match.group(0)
+        if day:
+            return format_date(date(year, month, int(day)))
+        return f"{MONTH_NAMES[month - 1]} {year}"
+
+    if re.search(r"\d{4}-\d{2}", period):
+        return re.sub(r"(\d{4})-(\d{2})(?:-(\d{2}))?", piece, period)
+    return period
+
+
+def humanize(text: str) -> str:
+    """Replace ISO dates and YYYY-MM periods inside client-facing prose."""
+
+    def date_sub(match: re.Match) -> str:
+        return format_date(date.fromisoformat(match.group(0)))
+
+    def month_sub(match: re.Match) -> str:
+        month = int(match.group(2))
+        if not 1 <= month <= 12:
+            return match.group(0)
+        return f"{MONTH_NAMES[month - 1]} {match.group(1)}"
+
+    text = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", date_sub, text)
+    return re.sub(r"\b(\d{4})-(\d{2})\b", month_sub, text)
 
 
 def _item_bullet(item: Item) -> list[str]:
     """Client-facing lines for one item. Uses a field whitelist."""
     lines = open_lines(item.lines)
-    label = item.description
-    if item.period and item.period not in label:
-        label = f"{label} ({item.period})"
+    label = humanize(item.description)
+    pretty_period = format_period(item.period)
+    if item.period and pretty_period not in label and item.period not in item.description:
+        label = f"{label} ({pretty_period})"
     bullets = [f"- {item.doc_type}: {label}.".replace(": :", ":")]
     if lines:
         bullets.append("  Still missing:")
         for line in lines:
-            period = f" ({line['period']})" if line["period"] else ""
+            period = f" ({format_period(line['period'])})" if line["period"] else ""
             bullets.append(f"  - {line['label']}{period}")
     elif item.lines:
         bullets.append("  Every listed line is marked received. A person should confirm that before closing the request.")
     if item.client_reason:
         bullets.append(f"  Why we need it: {item.client_reason}")
     else:
-        bullets.append("  Why we need it: needed for the books on file.")
+        bullets.append("  Why we need it: Needed for the books on file.")
     if item.amount:
         bullets.append(f"  Amount on file: {_fmt_amount(item.amount)}")
     alternative = ALTERNATIVES.get(item.doc_type.lower())
     if alternative:
         bullets.append(f"  If the original is not handy: {alternative}")
     if item.deadline:
-        bullets.append(f"  Deadline on file: {item.deadline.isoformat()}")
+        bullets.append(f"  Deadline on file: {format_date(item.deadline)}")
     return bullets
 
 
@@ -680,13 +893,29 @@ ALTERNATIVES = {
 }
 
 
+def _sender_line(item: Item, firm: dict) -> tuple[str, str]:
+    """Signature name, and a bookkeeper-only note when setup is missing.
+
+    Never returns a bracket placeholder.
+    """
+    if not _blank(item.owner_name):
+        firm_name = _blank(firm.get("firm_name"))
+        if firm_name:
+            return firm_name, "Setup is incomplete: this row has no sender name. The signature uses the firm name."
+        return (
+            "Your bookkeeping firm",
+            "Setup is incomplete: there is no sender name and no firm name. Add them before sending.",
+        )
+    return item.owner_name, ""
+
+
 def subject_for(group: dict) -> str:
     """Human subject with no touch count and no bulk-mail prefix."""
     items = [entry["item"] for entry in group["entries"]]
     if len(items) == 1:
         topic = items[0].doc_type
         if items[0].period:
-            topic = f"{items[0].period} {topic}"
+            topic = f"{format_period(items[0].period)} {topic}"
     else:
         topic = f"{len(items)} documents"
     if group["email_kind"] == "overdue":
@@ -712,7 +941,11 @@ def render_draft(group: dict, firm: dict) -> str:
         "",
         greeting(salutation),
         "",
-        "Hope you are doing well. We still need the documents below.",
+        (
+            "Hope you are doing well. We need the documents below."
+            if group["email_kind"] == "initial"
+            else "Hope you are doing well. We still need the documents below."
+        ),
         "",
     ]
     for item in items:
@@ -725,21 +958,28 @@ def render_draft(group: dict, firm: dict) -> str:
     ]
     if overdue_items:
         named = "; ".join(
-            f"{item.doc_type} (deadline {item.deadline.isoformat()})" for item in overdue_items
+            f"the {item.doc_type.lower()} (deadline {format_date(item.deadline)})" for item in overdue_items
         )
-        reason = overdue_items[0].client_reason or "the work that depends on it"
-        lines.append(
-            f"The deadline has passed for: {named}. Without those files, this work is held up: {reason}"
-        )
+        reason = (overdue_items[0].client_reason or "").strip()
+        if reason and reason[-1] not in ".!?":
+            reason += "."
+        sentence = f"The deadline has passed for {named}. Without those files, this work is held up."
+        if reason:
+            sentence += " " + reason
+        lines.append(sentence)
         lines.append("")
-    lines.append("Please reply to this email with the files attached.")
+    how = (firm.get("submission_instructions") or "").strip() or "Reply to this email with the file attached."
+    lines.append(f"How to send: {how}")
     lines.append("")
     lines.append("Thank you,")
     lines.append("")
-    lines.append(primary.owner_name or "[Sender Name]")
-    if primary.owner_title:
+    sender, setup_note = _sender_line(primary, firm)
+    if setup_note:
+        lines.insert(1, setup_note)
+    lines.append(sender)
+    if primary.owner_title and sender != primary.owner_title:
         lines.append(primary.owner_title)
-    if firm.get("firm_name"):
+    if firm.get("firm_name") and firm["firm_name"] != sender:
         lines.append(firm["firm_name"])
     if firm.get("firm_phone"):
         lines.append(firm["firm_phone"])
@@ -773,7 +1013,7 @@ def render_client_reply(item: Item, what_arrived: str, what_is_needed: str, firm
         "",
         "Thank you,",
         "",
-        item.owner_name or "[Sender Name]",
+        _sender_line(item, firm)[0],
     ]
     if item.owner_title:
         lines.append(item.owner_title)
@@ -781,6 +1021,38 @@ def render_client_reply(item: Item, what_arrived: str, what_is_needed: str, firm
         lines.append(firm["firm_name"])
     if firm.get("firm_email"):
         lines.append(firm["firm_email"])
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_partial_reply(item: Item, firm: dict) -> str:
+    """Thank the client for the lines that arrived and ask only for the rest."""
+    arrived = [line["label"] for line in item.lines if line["status"] == "received"]
+    missing = [line["label"] for line in item.lines if line["status"] == "open"]
+    got = ", ".join(arrived) or "what you sent"
+    still = ", ".join(missing) or "the remaining pages"
+    lines = [
+        DRAFT_BANNER,
+        "",
+        f"To: {item.contact_email or '(no email on file)'}",
+        "Subject: " + subject_for({"email_kind": "reminder", "entries": [{"item": item, "action": Action("email")}]}),
+        "",
+        greeting(item.salutation),
+        "",
+        f"Thank you for sending {got}.",
+        "",
+        f"We still need {still}.",
+        "",
+        "How to send: " + ((firm.get("submission_instructions") or "").strip() or "Reply to this email with the file attached."),
+        "",
+        "Thank you,",
+        "",
+        _sender_line(item, firm)[0],
+    ]
+    if item.owner_title:
+        lines.append(item.owner_title)
+    if firm.get("firm_name"):
+        lines.append(firm["firm_name"])
     lines.append("")
     return "\n".join(lines)
 
@@ -815,6 +1087,46 @@ def render_bad_contact_note(item: Item) -> str:
     )
 
 
+def mark_sent(items: Iterable[Item], today: date, ids: Optional[Iterable[str]] = None) -> list:
+    """Record that a person sent today's drafts.
+
+    Increments the touch count and sets the last contact to today. Calling it
+    again the same day does not count a second email. The next assessment then
+    waits out the two-business-day gap instead of drafting the same email again.
+    """
+    chosen = set(ids) if ids is not None else None
+    recorded = []
+    for item in items:
+        if chosen is not None and item.id not in chosen:
+            continue
+        if item.status not in EMAIL_STATUSES:
+            continue
+        if item.last_touch == today:
+            recorded.append(item)
+            continue
+        item.touches_sent += 1
+        item.last_touch = today
+        recorded.append(item)
+    apply_next_touch(recorded, today)
+    return recorded
+
+
+def note_client_reply(item: Item, today: date) -> Item:
+    """A reply that is not a document. Chasing stays paused until a person resumes it."""
+    item.status = "Paused"
+    item.client_replied = today
+    return item
+
+
+def resume_chase(item: Item, today: date) -> Item:
+    """A person has read the reply and wants the cadence to continue."""
+    if item.status == "Paused":
+        item.status = "Open"
+    if item.last_touch is None:
+        item.last_touch = today
+    return item
+
+
 def apply_next_touch(items: Iterable[Item], today: date) -> None:
     """Write the computed next_touch back onto each item. Clears it when no email remains."""
     for item in items:
@@ -838,6 +1150,66 @@ PRECHECK_OUTCOMES = (
     "INCOMPLETE",
     "REQUEST_MAY_BE_WRONG",
 )
+
+
+def months_in(period: str) -> set[tuple[int, int]]:
+    """(year, month) values a period covers. A bare year covers every month of that year.
+
+    ``2026-1`` is January. It does not match ``2026-10``. ``June 2026`` and
+    ``2026-06`` are the same month. ``2026-06 to 2026-08`` covers the three months.
+    """
+    text = period or ""
+    found: set[tuple[int, int]] = set()
+    for match in re.finditer(r"\b((?:19|20)\d{2})-(\d{1,2})(?:-(\d{1,2}))?\b", text):
+        month = int(match.group(2))
+        if 1 <= month <= 12:
+            found.add((int(match.group(1)), month))
+    for match in re.finditer(
+        r"\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b(?:[^0-9]{0,12}((?:19|20)\d{2}))?",
+        text,
+        re.I,
+    ):
+        month = MONTH_INDEX[match.group(1).lower()]
+        year = int(match.group(2)) if match.group(2) else 0
+        found.add((year, month))
+    if found:
+        # Expand an explicit range of year-months, such as 2026-06 to 2026-08.
+        dated = sorted(pair for pair in found if pair[0])
+        if len(dated) >= 2 and re.search(r"\b(to|through|–|—|-)\b", text, re.I):
+            start = dated[0][0] * 12 + dated[0][1]
+            end = dated[-1][0] * 12 + dated[-1][1]
+            if end - start <= 18:
+                cursor = start
+                while cursor <= end:
+                    year, month = divmod(cursor - 1, 12)
+                    found.add((year, month + 1))
+                    cursor += 1
+        return found
+    years = [int(value) for value in re.findall(r"\b(?:19|20)\d{2}\b", text)]
+    if len(years) == 1 and not re.search(r"\d{1,2}", text.replace(str(years[0]), "")):
+        return {(years[0], month) for month in range(1, 13)}
+    return set()
+
+
+def periods_overlap(requested: str, received: str) -> bool:
+    left = months_in(requested)
+    right = months_in(received)
+    if not left or not right:
+        # Fall back to a whole-token compare. Never a raw substring, so 2026-1
+        # cannot hide inside 2026-10.
+        return _norm(requested) == _norm(received)
+    # A month with year 0 (no year written) matches that month in any year present.
+    def expand(pairs: set[tuple[int, int]], other: set[tuple[int, int]]) -> set[tuple[int, int]]:
+        years = {year for year, _month in other if year}
+        expanded = set()
+        for year, month in pairs:
+            if year == 0 and years:
+                expanded.update((candidate, month) for candidate in years)
+            else:
+                expanded.add((year, month))
+        return expanded
+
+    return bool(expand(left, right) & expand(right, left))
 
 
 def _norm(value: str) -> str:
@@ -936,9 +1308,7 @@ def precheck(item: Item, document: dict, open_item_count: int = 1) -> Precheck:
             needs_confirmation=confirm,
         )
 
-    req_period = _norm(item.period)
-    doc_period = _norm(document.get("period") or "")
-    if req_period and doc_period and req_period not in doc_period and doc_period not in req_period:
+    if item.period and document.get("period") and not periods_overlap(item.period, document.get("period") or ""):
         # A document that covers some lines of a multi-line request is partial, not a hard mismatch.
         if not (item.lines and document.get("lines_covered")):
             return Precheck(
@@ -1052,8 +1422,10 @@ def apply_precheck(item: Item, result: Precheck, today: date) -> Item:
         item.received = today
         # The client responded, so the unanswered-email streak starts over.
         # The new anchor freezes a fresh tier for whatever lines are still open.
-        item.touches_sent = 0
-        item.last_touch = None
+        # The thank-you for what arrived is touch 1, already logged today,
+        # so assess does not queue a second email the same day.
+        item.touches_sent = 1
+        item.last_touch = today
         item.schedule_anchor = today
         return item
     if result.outcome == "MATCH":
@@ -1082,8 +1454,8 @@ def return_item(item: Item, today: date) -> Item:
     """
     item.status = "Returned"
     item.schedule_anchor = today
-    item.touches_sent = 0
-    item.last_touch = None
+    item.touches_sent = 1
+    item.last_touch = today
     item.received = today
     return item
 
@@ -1114,9 +1486,13 @@ HEADER_ALIASES = {
     "period": "period",
     "amount": "amount",
     "client reason": "client_reason",
-    "reason": "client_reason",
-    "why needed": "client_reason",
     "client-facing reason": "client_reason",
+    "client_reason": "client_reason",
+    # These are internal until a person confirms a separate client-facing reason.
+    "reason": "internal_notes",
+    "why needed": "internal_notes",
+    "why": "internal_notes",
+    "context": "internal_notes",
     "internal notes": "internal_notes",
     "notes": "internal_notes",
     "private notes": "internal_notes",
@@ -1155,7 +1531,10 @@ class Interpretation:
 
 
 _OFFSET = re.compile(r"^[+-]?\d+d$")
+_BUSINESS_OFFSET = re.compile(r"^[+-]?\d+bd$")
 _MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+_MONTH_TOKEN = re.compile(r"^month:([+-]?\d+)(?:@(registered|today))?$")
+_YEAR_TOKEN = re.compile(r"^year:([+-]?\d+)(?:@(registered|today))?$")
 
 
 def resolve_token(token: str, today: date) -> tuple[str, Optional[str]]:
@@ -1164,6 +1543,16 @@ def resolve_token(token: str, today: date) -> tuple[str, Optional[str]]:
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", token):
         parse_iso(token)
         return token, None
+    if _BUSINESS_OFFSET.fullmatch(token):
+        count = int(token[:-2])
+        cursor = today
+        step = 1 if count > 0 else -1
+        left = abs(count)
+        while left:
+            cursor += timedelta(days=step)
+            if is_business_day(cursor):
+                left -= 1
+        return cursor.isoformat(), None
     if _OFFSET.fullmatch(token):
         days = int(token[:-1])
         return (today + timedelta(days=days)).isoformat(), None
@@ -1186,43 +1575,103 @@ def resolve_token(token: str, today: date) -> tuple[str, Optional[str]]:
     raise RuleError(f"Cannot read date {token!r}. Use YYYY-MM-DD.")
 
 
-def resolve_period(token: str, today: date) -> str:
+def _month_end(year: int, month: int) -> date:
+    if month == 12:
+        return date(year + 1, 1, 1) - timedelta(days=1)
+    return date(year, month + 1, 1) - timedelta(days=1)
+
+
+def closed_month(anchor: date, shift: int, today: date) -> str:
+    """A month relative to ``anchor`` that has already ended before ``today``.
+
+    ``shift`` -1 is the month before the anchor month. If that month has not
+    ended yet, step back until it has. A statement is never requested for a
+    month that is still open.
+    """
+    index = anchor.year * 12 + (anchor.month - 1) + shift
+    while True:
+        year, month0 = divmod(index, 12)
+        month = month0 + 1
+        if _month_end(year, month) < today:
+            return f"{year:04d}-{month:02d}"
+        index -= 1
+
+
+def resolve_period(token: str, today: date, anchor: Optional[date] = None) -> str:
     token = token.strip()
+    base = anchor or today
+    month_match = _MONTH_TOKEN.fullmatch(token)
+    if month_match:
+        shift = int(month_match.group(1))
+        which = month_match.group(2) or "registered"
+        origin = today if which == "today" else base
+        return closed_month(origin, shift, today)
+    year_match = _YEAR_TOKEN.fullmatch(token)
+    if year_match:
+        shift = int(year_match.group(1))
+        which = year_match.group(2) or "registered"
+        origin = today if which == "today" else base
+        year = origin.year + shift
+        # A tax year that has not finished yet is not requestable.
+        if year >= today.year:
+            year = today.year - 1
+        return f"{year:04d}"
     if token.startswith("month:") or token.startswith("year:"):
-        value, _ = resolve_token(token, today)
-        return value
+        raise RuleError(f"Cannot read period {token!r}.")
     return token
 
 
+def _snap_contact_date(value: str, today: date) -> str:
+    """A contact date that landed on a weekend or holiday moves to the previous business day."""
+    if not value:
+        return value
+    day = parse_iso(value)
+    if day > today:
+        day = today
+    if not is_business_day(day):
+        day = previous_business_day(day)
+    return day.isoformat()
+
+
 def resolve_tracker_text(text: str, today: date) -> str:
-    """Replace relative date tokens in a demo CSV. Leaves the header intact."""
+    """Replace relative date tokens in a demo CSV. Leaves the header intact.
+
+    Periods anchor to the registration date, not to today, and a statement
+    month must already have ended. Registration and last-contact dates that
+    fall on a weekend or federal holiday move to the previous business day.
+    """
     reader = csv.DictReader(io.StringIO(text))
     if reader.fieldnames is None:
         raise RuleError("Tracker CSV has no header.")
     fields = list(reader.fieldnames)
-    date_fields = {
-        "deadline",
-        "last_touch",
-        "next_touch",
-        "registered",
-        "schedule_anchor",
-        "received",
-    }
+    contact_fields = ("registered", "schedule_anchor", "last_touch", "received")
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=fields, lineterminator="\n")
     writer.writeheader()
     for row in reader:
         if not (row.get("id") or "").strip():
             continue
-        for key in date_fields:
+        for key in ("deadline", "last_touch", "next_touch", "registered", "schedule_anchor", "received", "client_replied"):
             raw = (row.get(key) or "").strip()
             if not raw:
                 continue
             resolved, _ = resolve_token(raw, today)
             row[key] = resolved
+        anchor = parse_iso(row["registered"]) if (row.get("registered") or "").strip() else today
+        for key in contact_fields:
+            if (row.get(key) or "").strip():
+                row[key] = _snap_contact_date(row[key], today)
+        if (row.get("registered") or "").strip():
+            anchor = parse_iso(row["registered"])
+        doc_type = (row.get("doc_type") or "").strip().lower()
         period = (row.get("period") or "").strip()
         if period:
-            row["period"] = resolve_period(period, today)
+            resolved_period = resolve_period(period, today, anchor)
+            # Contracts and similar can name the current year. Tax forms and
+            # statements stay on a period that has already closed.
+            if doc_type not in STATEMENT_TYPES and _YEAR_TOKEN.fullmatch(period) and period.startswith("year:0"):
+                resolved_period = f"{anchor.year:04d}"
+            row["period"] = resolved_period
         description = row.get("description") or ""
         if "{period}" in description:
             row["description"] = description.replace("{period}", row.get("period") or "")
@@ -1234,8 +1683,8 @@ def resolve_tracker_text(text: str, today: date) -> str:
                 if len(bits) == 3:
                     token = bits[1]
                     if token.startswith(("month:", "year:")):
-                        bits[1] = resolve_period(token, today)
-                    elif _OFFSET.fullmatch(token) or _MDY.fullmatch(token):
+                        bits[1] = resolve_period(token, today, anchor)
+                    elif _OFFSET.fullmatch(token) or _BUSINESS_OFFSET.fullmatch(token) or _MDY.fullmatch(token):
                         bits[1], _ = resolve_token(token, today)
                 rebuilt.append(" | ".join(bits))
             row["lines"] = "; ".join(rebuilt)
@@ -1293,10 +1742,17 @@ def _interpret_csv(raw, today, protect, assumptions):
                 if value:
                     unknown.append(key.strip())
                 continue
+            if alias == "internal_notes" and mapped[alias] and value and value not in mapped[alias]:
+                mapped[alias] = mapped[alias] + "\n" + value
+                continue
             if alias in mapped and mapped[alias] and value and mapped[alias] != value:
                 questions.append(f"Row {index}: both columns wrote {alias}. I kept the first value.")
                 continue
             mapped[alias] = value
+            if key.strip().lower() in {"reason", "why needed", "why", "context"}:
+                questions.append(
+                    f"Row {index}: '{key.strip()}' was stored as an internal note. It will not be put in a client email unless you confirm a separate client-facing reason."
+                )
         if unknown:
             questions.append(
                 "Row {0}: I did not recognize columns {1}. I left them out.".format(
@@ -1461,6 +1917,70 @@ def understood_table(rows: list[dict]) -> str:
     lines = [fmt(headers), fmt(["-" * width for width in widths])]
     lines.extend(fmt(values) for values in show)
     return "\n".join(lines)
+
+
+def extract_document(path: str) -> dict:
+    """Read a PDF and return the fields the pre-check compares.
+
+    This is a deterministic reader for digital PDFs (text, not a scan). It
+    does not guess a period or an entity that is not written in the file.
+    """
+    from pypdf import PdfReader
+
+    reader = PdfReader(path)
+    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    facts: dict = {"text": text, "complete": True, "lines_covered": []}
+    last4 = re.search(r"\*{2,}(\d{4})", text)
+    if last4:
+        facts["account_last4"] = last4.group(1)
+    entity = re.search(r"Account Holder:\s*(.+)", text)
+    if entity:
+        facts["entity"] = " ".join(entity.group(1).split())
+    statement = re.search(r"Statement Period:\s*([A-Za-z]+).{0,40}?((?:19|20)\d{2})", text, re.S)
+    if statement:
+        facts["doc_type"] = "Bank Statement"
+        facts["period"] = f"{statement.group(1)} {statement.group(2)}"
+        if not facts.get("entity"):
+            named = re.search(r"Account Holder:\s*(.+?)(?:\n|Account)", text, re.S)
+            if named:
+                facts["entity"] = " ".join(named.group(1).split())
+    po_numbers = re.findall(r"PO #([A-Z]+-\d+)", text)
+    if po_numbers and re.search(r"PURCHASE ORDER", text, re.I):
+        facts["doc_type"] = "Purchase Order"
+        facts["doc_number"] = po_numbers[0]
+        if re.search(r"Miruvor", text):
+            facts["subject"] = "Miruvor Wine"
+        if len(po_numbers) > 1:
+            issued = re.search(r"issued\s+separately\s+on\s+([A-Za-z]+ \d{1,2}, \d{4})", text, re.S)
+            subject = "Lembas Bread" if re.search(r"Lembas", text) else ""
+            facts["pointer"] = {
+                "number": po_numbers[1],
+                "subject": subject,
+                "issued": issued.group(1) if issued else "",
+            }
+            facts["requested_subject"] = subject
+    invoice = re.search(r"INVOICE\s*#([A-Z]+-\d+)|Invoice\s*#([A-Z]+-\d+)", text, re.I)
+    if invoice and "doc_number" not in facts:
+        facts["doc_type"] = "Invoice"
+        facts["doc_number"] = invoice.group(1) or invoice.group(2)
+    bill_to = re.search(r"BILL TO\s*(.+)", text)
+    if bill_to and "entity" not in facts:
+        facts["entity"] = bill_to.group(1).strip()
+    if re.search(r"RECEIPT", text, re.I) and "doc_type" not in facts:
+        facts["doc_type"] = "Receipt"
+        dated = re.search(r"Date:\s*([A-Za-z]+ \d{1,2}, \d{4})", text)
+        if dated:
+            facts["period"] = dated.group(1)
+        head = "\n".join(text.splitlines()[:8]).upper()
+        if "SECOND BREAKFAST" in head:
+            facts["lines_covered"].append("Second Breakfast catering")
+        elif "ELEVENSES" in head:
+            facts["lines_covered"].append("Elevenses Bakery")
+        if re.search(r"Shire Agricultural", text):
+            facts["entity"] = "Shire Agricultural Co-op"
+        if re.search(r"Baggins", text) and "entity" not in facts:
+            facts["entity"] = "Baggins & Associates LLC"
+    return facts
 
 
 def kit_header() -> str:

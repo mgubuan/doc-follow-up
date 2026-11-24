@@ -30,6 +30,7 @@ One row is one document request. A request that has several pieces (two receipts
 | `schedule_anchor` | no | Defaults to `registered`. Set to today when a return or a partial resets the cadence. |
 | `received` | no | `YYYY-MM-DD` the latest file arrived, or blank. |
 | `lines` | no | See below. |
+| `client_replied` | no | `YYYY-MM-DD` a non-document reply paused the chase, or blank. |
 
 ## Statuses
 
@@ -39,9 +40,10 @@ One row is one document request. A request that has several pieces (two receipts
 | `Partial` | Some lines arrived. Chase the open lines only. | When the plan says today. |
 | `Received` | A file is in and a person has not reviewed it. | No. |
 | `Accepted` | The person accepted it. Closed. | No. |
-| `Returned` | The person sent it back. The cadence restarts at the return date. | When the new plan says today. |
+| `Returned` | The person sent it back. The rejection counts as today's touch. | After the two-business-day gap. |
 | `Bad contact` | Bounce or wrong person. | No. Ask for a new email or phone. |
 | `Call needed` | The email cap is used up and the deadline has passed. | No. Call. |
+| `Paused` | The client replied, and a person has not read it yet. | No, until the chase is resumed. |
 
 ## Lines
 
