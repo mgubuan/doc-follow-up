@@ -1,47 +1,30 @@
-# Stage 03: Draft Follow-Up Emails
+# Stage 03: Draft
 
-Write contextual follow-up emails for each client with items due today.
+Write one email per client who is due today. Drafts only.
 
-## Inputs
+## Load
 
-| Source | File/Location | Section/Scope | Why |
-|--------|--------------|---------------|-----|
-| Assessment | `../02-assess/output/follow-up-assessment-*.md` | Most recent file | Which clients need follow-up and what items |
-| Tracker | `../../shared/tracker.csv` | Rows matching assessed items | Full context for each request |
-| Defaults | `../../shared/email-defaults.md` | Full file | Firm name, sender info, signature |
-| Reference | `references/email-templates.md` | Template matching follow-up number | Email structure |
-| Reference | `references/tone-guide.md` | Full file | Voice and tone rules |
-| Doc types | `../01-register/references/document-types.md` | Matching types | Submission instructions to include |
+| Source | File |
+|---|---|
+| Assessment | `stages/02-assess/output/` (the latest file) |
+| Rules | `core/safety.md`, `core/tone-guide.md`, `core/email-templates.md`, `core/document-types.md` |
+| Tracker | `shared/tracker.csv` (client-facing columns and the owner) |
+| Firm | `shared/firm.md`, `shared/email-defaults.md` |
+
+Do not load stages 01, 04, or 05. Do not put `internal_notes` into the prompt you draft from. If you have already read them, they still must not appear in the email.
 
 ## Process
 
-1. Read the most recent assessment from Stage 02
-2. For each client group, draft ONE email that covers all their open items
-3. For each item in the email: reference the specific document by name and date range, include submission instructions, acknowledge overdue items if applicable, reference previous submissions if this is a re-request after a Returned item
-4. Include the follow-up number in the subject line
-5. Use the sender name and signature from the assigned team member
-6. Run the audit checks below
-7. Save each draft email to output/
+1. One email per client. A mix of an initial and a reminder is still one email. The subject does not say which touch number it is.
+2. List open lines only. Use `client_reason` as the only "why".
+3. Overdue items get one factual sentence. Warmth stays the same.
+4. Salutation from the field, or `Hello,`.
+5. Run the internal-notes check. Fix a draft that fails it before showing it.
+6. Show the drafts. A person edits and sends them. Do not send.
+7. When they say a draft was sent, mark those items sent (`touches_sent` + 1, `last_touch` = today in the firm time zone, default America/Los_Angeles). Do not mark them sent just because you drafted them. Marking the same item again today does not count another email.
 
-## Checkpoint
+## Output
 
-| After Step | Agent Presents | Human Decides |
-|------------|---------------|---------------|
-| 5 | Draft emails for each client | Edit tone, add details, approve for sending, or hold |
+`output/[client-slug]-follow-up-[YYYY-MM-DD].md`
 
-## Audit
-
-| Check | Pass Condition |
-|-------|---------------|
-| Tone | Friendly and professional throughout. No passive aggression, guilt, or punitive language |
-| Specificity | Every requested document is named with its exact type, date range, and any special instructions |
-| Overdue acknowledgment | Any overdue item is acknowledged with impact explanation |
-| Submission instructions | Clear instructions for how to send each document |
-| Length | Under 200 words per email (excluding checklists) |
-| Grouping | One email per client, never multiple emails to the same client on the same day |
-
-## Outputs
-
-| Artifact | Location | Format |
-|----------|----------|--------|
-| Draft emails | `output/[client-slug]-follow-up-[date].md` | Complete email ready to send: subject, body, signature |
+The `DRAFT` line stays above `To:`. Also write a call note or a bad-contact note for those lists. Those are internal. They are not emails.

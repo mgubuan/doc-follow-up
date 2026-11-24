@@ -1,82 +1,83 @@
 # Client Documentation Follow-Up
 
-Manage open documentation requests across your bookkeeping team: register what you need, track deadlines, draft contextual follow-up emails, and close the loop when documents arrive.
+Manage open documentation requests across a bookkeeping team: register what you need, track deadlines, draft follow-up emails, and close the loop when documents arrive.
 
-## Folder Map
+The rules live in `core/`. This file is the Claude Code entry point. A chat-only agent with no filesystem follows `core/README.md` and `core/flows/one-shot.md` instead.
+
+Load `core/safety.md` for every task.
+
+## Folder map
 
 ```
 doc-follow-up/
-├── CLAUDE.md              (you are here)
-├── CONTEXT.md             (start here for task routing)
-├── setup/
-│   └── questionnaire.md   (onboarding -- run with "setup")
+├── CLAUDE.md
+├── CONTEXT.md
+├── core/                  rules, schema, one-shot flow, reference engine
+├── demo/                  12-client sample firm, dates relative to today
+├── setup/questionnaire.md
 ├── shared/
-│   ├── tracker.csv        (master request tracker -- the backbone)
-│   ├── follow-up-rules.md (deadline-driven follow-up schedule)
-│   └── email-defaults.md  (firm name, signature, reply-to)
-├── stages/
-│   ├── 01-register/       (add new documentation requests)
-│   ├── 02-assess/         (determine what needs follow-up today)
-│   ├── 03-draft/          (write contextual follow-up emails)
-│   ├── 04-receive/        (log incoming docs, run pre-check)
-│   └── 05-review/         (accept, reject, or override)
-└── test-data/             (LOTR-themed mock documents for testing)
+│   ├── firm.md            the only setup store
+│   ├── tracker.csv        local working tracker (header until you add rows)
+│   ├── follow-up-rules.md pointer to core
+│   └── email-defaults.md
+├── stages/01–05           local pipeline on top of core
+└── tests/                 LOTR regression fixture and run_tests.py
 ```
 
 ## Triggers
 
 | Keyword | Action |
-|---------|--------|
-| `setup` | Run onboarding questionnaire -- configures firm name, team, defaults |
-| `status` | Show pipeline status and open item counts |
-| `register` | Jump to Stage 01 to add a new request |
-| `assess` | Jump to Stage 02 to check what needs follow-up today |
-| `draft` | Jump to Stage 03 to write follow-up emails |
-| `received` | Jump to Stage 04 to log an incoming document |
-| `review` | Jump to Stage 05 to accept or reject a received document |
+|---|---|
+| `setup` | `setup/questionnaire.md`. Optional. Does not block `demo`. |
+| `demo` | Resolve `demo/tracker.csv` against today and run `core/flows/one-shot.md`. |
+| `one-shot` | Paste or upload a list. Follow `core/flows/one-shot.md`. Do not write their clients into the repo. |
+| `status` | Count the local tracker. See below. |
+| `register` | `stages/01-register/CONTEXT.md` |
+| `assess` | `stages/02-assess/CONTEXT.md` |
+| `draft` | `stages/03-draft/CONTEXT.md` |
+| `received` | `stages/04-receive/CONTEXT.md` |
+| `review` | `stages/05-review/CONTEXT.md` |
 
 ### How `status` works
 
-Read `shared/tracker.csv`. Count items by status (Open, Received, Accepted, Returned). For Open items, calculate days to deadline and flag any that need follow-up today. Render:
+Read `shared/tracker.csv`. Count rows by status: Open, Partial, Received, Accepted, Returned, Bad contact, Call needed. For Open, Partial, and Returned, recompute the next action from `core/follow-up-rules.md`. Render:
 
 ```
-Documentation Tracker: [firm-name]
+Documentation tracker: [firm name from shared/firm.md]
 
-Open: X items (Y need follow-up today)
-Received (pending review): X items
-Accepted (closed): X items
-Returned (back to client): X items
+Open: X (Y due for email today)
+Partial: X
+Received (pending review): X
+Accepted: X
+Returned: X
+Bad contact: X
+Call needed: X
 
-Items needing follow-up today:
-  - [Client] -- [Doc Type] -- [Description] -- due [date]
+Due for email today:
+  - [Client] — [doc type] — [description] — deadline [YYYY-MM-DD]
+Call, do not email:
+  - [Client] — [doc type]
+Bad contact, do not email:
+  - [Client] — [doc type]
 ```
 
-## Routing
+## What to load
 
-| Task | Go To |
-|------|-------|
-| Add a new documentation request | `stages/01-register/CONTEXT.md` |
-| Check what needs follow-up today | `stages/02-assess/CONTEXT.md` |
-| Draft follow-up emails | `stages/03-draft/CONTEXT.md` |
-| Log a received document | `stages/04-receive/CONTEXT.md` |
-| Review and accept/reject a document | `stages/05-review/CONTEXT.md` |
+| Task | Load | Do not load |
+|---|---|---|
+| Any task | `core/safety.md` | |
+| Register | `shared/tracker.csv`, `core/schema.md`, `core/follow-up-rules.md`, `core/document-types.md`, `shared/firm.md` | Stages 02–05 |
+| Assess | `shared/tracker.csv`, `core/follow-up-rules.md` | Stages 01, 03–05 |
+| Draft | latest `stages/02-assess/output/*`, `shared/tracker.csv` (not `internal_notes`), `shared/firm.md`, `core/email-templates.md`, `core/tone-guide.md`, `core/document-types.md` | Stages 01, 04–05 |
+| Receive | `shared/tracker.csv`, `core/pre-check-rules.md`, the attached file | Stages 01–03, 05 |
+| Review | `stages/04-receive/output/*`, `shared/tracker.csv`, `core/email-templates.md`, `core/pre-check-rules.md` | Stages 01–03 |
 
-## What to Load
+## Stage handoffs
 
-| Task | Load These | Do NOT Load |
-|------|-----------|-------------|
-| Register a request | `shared/tracker.csv`, `stages/01-register/references/*` | Stages 02-05 |
-| Assess open items | `shared/tracker.csv`, `shared/follow-up-rules.md` | Stages 01, 03-05, references |
-| Draft follow-ups | `stages/02-assess/output/*`, `shared/tracker.csv`, `shared/email-defaults.md`, `stages/03-draft/references/*` | Stages 01, 04-05 |
-| Log received doc | `shared/tracker.csv`, `stages/04-receive/references/*` | Stages 01-03, 05 |
-| Review received doc | `stages/04-receive/output/*`, `shared/tracker.csv`, `stages/05-review/references/*` | Stages 01-03 |
+Stages run in any order. The local tracker connects them.
 
-## Stage Handoffs
-
-This is NOT a linear pipeline. Stages can be run in any order based on what the team needs right now. The tracker CSV is the shared state that connects everything. Every stage reads from it and some stages update it.
-
-- Stage 01 WRITES new rows to the tracker
-- Stage 02 READS the tracker to find items due for follow-up
-- Stage 03 READS Stage 02 output + tracker to draft emails
-- Stage 04 UPDATES tracker status from Open to Received
-- Stage 05 UPDATES tracker status to Accepted or Returned (back to Open)
+- Stage 01 appends rows.
+- Stage 02 reads and does not trust a stored next-touch over the rules.
+- Stage 03 drafts. It does not send.
+- Stage 04 sets Received, or Partial when only some lines arrived.
+- Stage 05 sets Accepted, or Returned (touch count back to 0, anchor today).

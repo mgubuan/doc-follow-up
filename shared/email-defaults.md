@@ -1,33 +1,29 @@
-# Email Defaults
+# Email defaults
 
-## Firm Information
+Read `shared/firm.md` for the firm name, email, phone, and team. That file is the only setup store. Do not expect those values to be copied anywhere else.
 
-| Field | Value |
-|-------|-------|
-| Firm name | {{FIRM_NAME}} |
-| Reply-to | {{FIRM_EMAIL}} |
-| Phone | {{FIRM_PHONE}} |
+## Signature
 
-## Sender
-
-The sender is whoever owns the tracking line item. Use their name and title in the signature.
-
-## Signature Block
+Use the owner on the tracker row. Use their title from the row, or from the matching `Name | Title` line in `shared/firm.md`. Omit the title line when neither has one. Do not leave a `[Sender Title]` bracket in the email.
 
 ```
-Best regards,
+Thank you,
 
-[Sender Name]
-[Sender Title]
-{{FIRM_NAME}}
-{{FIRM_PHONE}}
-{{FIRM_EMAIL}}
+[owner_name]
+[owner_title]
+[firm name from shared/firm.md]
+[firm phone from shared/firm.md]
+[firm email from shared/firm.md]
 ```
 
-## Email Style
+## Subject
 
-- Subject line format: "[Firm Name] -- Documentation Request: [Brief Description]"
-- For follow-ups: "[Firm Name] -- Follow-Up #N: [Brief Description]"
-- Always address the client by first name
-- Always close with the signature block
-- Keep emails under 200 words (excluding checklists or submission instructions)
+`Documents needed: [what it is]`
+
+When any item in the email is past its deadline: `Deadline passed: [what it is]`
+
+Do not put the firm name, a `--` separator, or a follow-up number in the subject.
+
+## Address
+
+`Hi [salutation],` when the row has a salutation. `Hello,` when it does not. Never take the name from the email address.

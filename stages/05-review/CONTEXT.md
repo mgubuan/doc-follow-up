@@ -1,51 +1,26 @@
-# Stage 05: Review and Resolve
+# Stage 05: Review
 
-Review a received document and either accept it or reject it back to the client with specifics.
+A person accepts the file, rejects it, or overrides the check.
 
-## Inputs
+## Load
 
-| Source | File/Location | Section/Scope | Why |
-|--------|--------------|---------------|-----|
-| Receive log | `../04-receive/output/[matching file]` | Full file | Pre-check result and details |
-| Tracker | `../../shared/tracker.csv` | Row matching this item | Full request context |
-| Reference | `references/rejection-templates.md` | Full file | Friendly rejection email templates |
-| Defaults | `../../shared/email-defaults.md` | Full file | Firm info and signature for rejection emails |
+| Source | File |
+|---|---|
+| Receive log | `stages/04-receive/output/` |
+| Rules | `core/safety.md`, `core/pre-check-rules.md`, `core/email-templates.md`, `core/tone-guide.md` |
+| Tracker | `shared/tracker.csv` |
+| Firm | `shared/firm.md` |
+
+Do not load stages 01–03.
 
 ## Process
 
-1. Present the receive log from Stage 04, including the pre-check result
-2. Ask the reviewer for their decision: Accept, Reject (specify what is wrong), or Override (pre-check flagged it but it is actually correct)
-3. Based on the decision:
+1. Show the check, including a REQUEST_MAY_BE_WRONG flag when the file points at a different document.
+2. Ask for Accept, Reject, or Override.
+3. Accept or Override: status `Accepted`. The request is closed.
+4. Reject: status `Returned`, touch count 1, last contact today, schedule anchor today. Draft the thank-you reply from `core/email-templates.md`. The ask is what is still needed. If the person agrees the request was wrong, the ask is the corrected document, not the original bad number. That draft is today's touch. Do not also queue a chase email. Do not send it.
+5. A rejection draft still has to pass the internal-notes check and the tone check.
 
-**If Accept or Override:**
-- Update tracker status to "Accepted"
-- Record the acceptance date
-- Item is closed. No further follow-ups
+## Output
 
-**If Reject:**
-- Update tracker status to "Returned" (Open with history)
-- Record what was wrong and what is still needed
-- Auto-draft a friendly rejection email that thanks the client, explains what does not match, and restates what is needed
-- Reset the follow-up schedule with updated context
-- Save the rejection draft to output/
-
-## Checkpoint
-
-| After Step | Agent Presents | Human Decides |
-|------------|---------------|---------------|
-| 3 (Reject path only) | Draft rejection email | Edit, approve, or change decision to Accept |
-
-## Audit (Reject path only)
-
-| Check | Pass Condition |
-|-------|---------------|
-| Tone | Friendly and professional. Thanks the client. No blame |
-| Specificity | States exactly what was wrong and exactly what is still needed |
-| Instructions | Includes submission instructions |
-
-## Outputs
-
-| Artifact | Location | Format |
-|----------|----------|--------|
-| Review decision | `output/[client-slug]-review-[date].md` | Decision, reasoning, any rejection email draft |
-| Updated tracker | `../../shared/tracker.csv` | Status changed to "Accepted" or "Returned" |
+`output/[client-slug]-review-[YYYY-MM-DD].md` with the decision and, on a reject, the draft.

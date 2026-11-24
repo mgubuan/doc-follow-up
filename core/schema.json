@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mgubuan/doc-follow-up/core/schema.json",
+  "title": "Documentation request tracker",
+  "description": "Canonical tracker for one bookkeeping or tax firm. CSV uses the same field names, one request per row. Dates are YYYY-MM-DD.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "items"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "firm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "firm_name": {"type": "string"},
+        "firm_email": {"type": "string"},
+        "firm_phone": {"type": "string"},
+        "team_members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string"},
+              "title": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/item"}
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "client_name", "description", "deadline", "status", "registered"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "client_name": {"type": "string", "minLength": 1},
+        "salutation": {"type": "string", "description": "First name or initials. Blank means Hello. Never derived from the email."},
+        "contact_email": {"type": "string"},
+        "contact_phone": {"type": "string"},
+        "doc_type": {"type": "string"},
+        "description": {"type": "string", "description": "Client-facing description of the missing document."},
+        "period": {"type": "string", "description": "YYYY-MM, a year, or a short label such as 2026-06 to 2026-08."},
+        "amount": {"type": "string", "pattern": "^$|^\\d+(\\.\\d+)?$", "description": "Plain number. No dollar sign and no commas."},
+        "client_reason": {"type": "string", "description": "Why the firm needs it, in words a client may read."},
+        "internal_notes": {"type": "string", "description": "Firm-only. Never copied into a client draft."},
+        "deadline": {"type": "string", "format": "date"},
+        "status": {"enum": ["Open", "Partial", "Received", "Accepted", "Returned", "Bad contact", "Call needed", "Paused"]},
+        "client_replied": {"type": "string", "description": "YYYY-MM-DD a reply paused the chase, or empty."},
+        "owner_name": {"type": "string"},
+        "owner_title": {"type": "string"},
+        "touches_sent": {"type": "integer", "minimum": 0},
+        "last_touch": {"type": "string", "description": "YYYY-MM-DD or empty."},
+        "next_touch": {"type": "string", "description": "Computed. Recompute rather than trusting a stored value."},
+        "registered": {"type": "string", "format": "date"},
+        "schedule_anchor": {"type": "string", "description": "YYYY-MM-DD. Defaults to registered. Reset when an item is returned or partially received."},
+        "received": {"type": "string"},
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "status"],
+            "properties": {
+              "label": {"type": "string"},
+              "period": {"type": "string"},
+              "status": {"enum": ["open", "received"]}
+            }
+          }
+        }
+      }
+    }
+  }
+}
